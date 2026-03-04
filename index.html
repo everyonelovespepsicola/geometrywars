@@ -383,11 +383,15 @@
         let infiniteLives = false;
         let debugShowLines = false;
         let lastTime = performance.now();
+        let lastTimeForDt = performance.now();
         let fpsFrames = 0;
         let nextLifeThreshold = 15000;
         let nextBombThreshold = 30000;
         let bombEffect = { active: false, radius: 0, alpha: 0 };
         let orbs = [];
+        let projectilePool;
+        let particlePool;
+        let grid;
 
         // World and Camera
         const world = { width: 3000, height: 2000 };
@@ -410,7 +414,7 @@
         });
 
         // Input Handling
-        const mouse = { screenX: canvas.width / 2, screenY: canvas.height / 2, x: 0, y: 0 };
+        const mouse = { screenX: canvas.width / 2, screenY: canvas.height / 2, x: 0, y: 0, down: false };
         const keys = { w: false, a: false, s: false, d: false };
 
         // Gamepad State
@@ -465,11 +469,11 @@
             inputMode = 'mouse';
         });
 
-        window.addEventListener('mousedown', () => {
-            if (gameActive && player.alive) {
-                player.shoot();
-            }
-        });
+        window.addEventListener('mousedown', () => { mouse.down = true; });
+        window.addEventListener('mouseup', () => { mouse.down = false; });
+
+
+
 
         resumeBtn.addEventListener('click', togglePause);
 
@@ -489,6 +493,135 @@
 
         // --- CLASSES ---
 
+        class Point {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.baseX = x;
+                this.baseY = y;
+                this.velX = 0;
+                this.velY = 0;
+                this.mass = 2;
+                this.stiffness = 0.025;
+                this.damping = 0.92;
+            }
+
+            update() {
+                let forceX = (this.baseX - this.x) * this.stiffness;
+                let forceY = (this.baseY - this.y) * this.stiffness;
+                this.velX += forceX / this.mass;
+                this.velY += forceY / this.mass;
+                this.velX *= this.damping;
+                this.velY *= this.damping;
+                this.x += this.velX;
+                this.y += this.velY;
+            }
+        }
+
+        class Grid {
+            constructor(width, height, spacing) {
+                this.width = width;
+                this.height = height;
+                this.spacing = spacing;
+                this.cols = Math.ceil(width / spacing) + 1;
+                this.rows = Math.ceil(height / spacing) + 1;
+                this.points = [];
+                for (let y = 0; y < this.rows; y++) {
+                    let row = [];
+                    for (let x = 0; x < this.cols; x++) {
+                        row.push(new Point(x * spacing, y * spacing));
+                    }
+                    this.points.push(row);
+                }
+            }
+
+            applyForce(x, y, radius, force) {
+                const minCol = Math.max(0, Math.floor((x - radius) / this.spacing));
+                const maxCol = Math.min(this.cols - 1, Math.ceil((x + radius) / this.spacing));
+                const minRow = Math.max(0, Math.floor((y - radius) / this.spacing));
+                const maxRow = Math.min(this.rows - 1, Math.ceil((y + radius) / this.spacing));
+
+                for (let r = minRow; r <= maxRow; r++) {
+                    for (let c = minCol; c <= maxCol; c++) {
+                        const p = this.points[r][c];
+                        const dx = p.x - x;
+                        const dy = p.y - y;
+                        const distSq = dx * dx + dy * dy;
+                        if (distSq < radius * radius) {
+                            const dist = Math.sqrt(distSq);
+                            const f = (1 - dist / radius) * force;
+                            const angle = Math.atan2(dy, dx);
+                            p.velX += Math.cos(angle) * f;
+                            p.velY += Math.sin(angle) * f;
+                        }
+                    }
+                }
+            }
+
+            update() {
+                for (let r = 0; r < this.rows; r++) {
+                    for (let c = 0; c < this.cols; c++) {
+                        this.points[r][c].update();
+                    }
+                }
+            }
+
+            draw(ctx, view) {
+                ctx.save();
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+                ctx.lineWidth = 1;
+
+                const minCol = Math.max(0, Math.floor((view.x - this.spacing) / this.spacing));
+                const maxCol = Math.min(this.cols - 1, Math.ceil((view.x + view.width + this.spacing) / this.spacing));
+                const minRow = Math.max(0, Math.floor((view.y - this.spacing) / this.spacing));
+                const maxRow = Math.min(this.rows - 1, Math.ceil((view.y + view.height + this.spacing) / this.spacing));
+
+                for (let r = minRow; r <= maxRow; r++) {
+                    ctx.beginPath();
+                    for (let c = minCol; c <= maxCol; c++) {
+                        const p = this.points[r][c];
+                        if (c === minCol) ctx.moveTo(p.x, p.y);
+                        else ctx.lineTo(p.x, p.y);
+                    }
+                    ctx.stroke();
+                }
+
+                for (let c = minCol; c <= maxCol; c++) {
+                    ctx.beginPath();
+                    for (let r = minRow; r <= maxRow; r++) {
+                        const p = this.points[r][c];
+                        if (r === 0) ctx.moveTo(p.x, p.y);
+                        else ctx.lineTo(p.x, p.y);
+                    }
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+        }
+
+        class Pool {
+            constructor(objectClass, initialSize = 100) {
+                this.objectClass = objectClass;
+                this.pool = [];
+                for (let i = 0; i < initialSize; i++) {
+                    this.pool.push(new this.objectClass());
+                }
+            }
+
+            get() {
+                if (this.pool.length > 0) {
+                    return this.pool.pop();
+                }
+                // Pool is empty, create a new one (allows for spikes)
+                return new this.objectClass();
+            }
+
+            release(obj) {
+                // Could add a check to ensure we don't add too many back
+                this.pool.push(obj);
+            }
+        }
+
         class Player {
             constructor(x, y) {
                 this.x = x;
@@ -503,21 +636,17 @@
                 this.aimAngle = 0;
                 this.facingAngle = 0;
                 this.triggerLocked = false;
-                this.lastShot = 0;
-                this.shootCooldown = 25;
+                this.lastShotTime = 0;
+                this.shootCooldownMs = 80; // Milliseconds
             }
 
-            draw() {
+            draw(ctx) {
                 if (!this.alive) return;
-                
+
                 ctx.save();
                 ctx.translate(this.x, this.y);
                 ctx.rotate(this.facingAngle);
-                
-                // Neon Glow
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = this.color;
-                
+
                 // Draw Ship (Claw Design)
                 ctx.beginPath();
                 ctx.moveTo(20, -8);  // Top Front Tip
@@ -527,9 +656,18 @@
                 ctx.lineTo(-6, 0);   // Rear Notch
                 ctx.lineTo(-12, -12);// Top Back Wing
                 ctx.closePath();
-                
-                ctx.strokeStyle = this.invulnerable && frame % 10 < 5 ? 'transparent' : this.color;
+
+                // Manual glow (faster than shadowBlur)
+                ctx.save();
+                ctx.globalAlpha = 0.5;
+                ctx.lineWidth = 8;
+                ctx.strokeStyle = this.color;
+                ctx.stroke(); // Strokes the main path for the glow effect
+                ctx.restore();
+
+                // Draw the main ship outline
                 ctx.lineWidth = 2;
+                ctx.strokeStyle = this.invulnerable && frame % 10 < 5 ? 'transparent' : this.color;
                 ctx.stroke();
 
                 // Inner Core
@@ -538,13 +676,16 @@
                 ctx.lineTo(-8, -4);
                 ctx.lineTo(-8, 4);
                 ctx.closePath();
+
+                // Fill and stroke the ship's core
                 ctx.fillStyle = this.invulnerable && frame % 10 < 5 ? 'transparent' : this.color;
                 ctx.fill();
+                ctx.stroke();
                 
                 ctx.restore();
             }
 
-            update() {
+            update(dt, now) {
                 if (!this.alive) return;
 
                 // Movement Logic
@@ -578,13 +719,12 @@
                             this.aimAngle = Math.atan2(ry, rx);
                             inputMode = 'gamepad';
                             
-                            // Turbo Fire Check
-                            this.shootCooldown = (scoreStreak >= 20000) ? 6 : 25;
+                            // Power-ups modify cooldown
+                            this.shootCooldownMs = (scoreStreak >= 20000) ? 20 : 80;
 
                             // Twin-stick auto-fire
-                            if (frame > this.lastShot + this.shootCooldown) {
-                                this.shoot();
-                                this.lastShot = frame;
+                            if (now > this.lastShotTime + this.shootCooldownMs) {
+                                this.shoot(now);
                             }
                         }
 
@@ -601,17 +741,26 @@
                 }
 
                 // Unified Aiming Logic: Fallback to mouse if right stick is not active
-                if (!rightStickActive) {
+                if (!rightStickActive) { // Mouse aiming
                     this.aimAngle = Math.atan2(mouse.y - this.y, mouse.x - this.x);
+                    if (mouse.down) {
+                        // Power-ups modify cooldown
+                        this.shootCooldownMs = (scoreStreak >= 20000) ? 20 : 80;
+                        if (now > this.lastShotTime + this.shootCooldownMs) {
+                            this.shoot(now);
+                        }
+                    }
                 }
 
                 // Apply velocity
-                this.x += this.velocity.x * this.speed;
-                this.y += this.velocity.y * this.speed;
+                this.x += this.velocity.x * this.speed * 60 * dt;
+                this.y += this.velocity.y * this.speed * 60 * dt;
 
                 // Friction
-                this.velocity.x *= this.friction;
-                this.velocity.y *= this.friction;
+                // Use Math.pow to make friction frame-rate independent
+                const frictionFactor = Math.pow(this.friction, dt * 60);
+                this.velocity.x *= frictionFactor;
+                this.velocity.y *= frictionFactor;
 
                 // Wall Boundaries
                 if (this.x - this.radius < 0) this.x = this.radius;
@@ -625,11 +774,10 @@
                 if (speed > 0.01) { 
                     this.facingAngle = Math.atan2(this.velocity.y, this.velocity.x);
                 }
-
-                this.draw();
             }
 
-            shoot() {
+            shoot(now) {
+                this.lastShotTime = now;
                 sounds.shoot();
                 const isSpread = scoreStreak >= 10000 && scoreStreak < 20000;
 
@@ -637,8 +785,7 @@
                     x: Math.cos(this.aimAngle) * 12,
                     y: Math.sin(this.aimAngle) * 12
                 };
-                // Spawn bullet at tip of ship
-                projectiles.push(new Projectile(
+                projectiles.push(projectilePool.get().init(
                     this.x + Math.cos(this.aimAngle) * 20, 
                     this.y + Math.sin(this.aimAngle) * 20, 
                     velocity
@@ -648,10 +795,11 @@
                     const spread = 0.25;
                     const angles = [this.aimAngle - spread, this.aimAngle + spread];
                     angles.forEach(angle => {
-                        projectiles.push(new Projectile(
+                        const vel = { x: Math.cos(angle) * 12, y: Math.sin(angle) * 12 };
+                        projectiles.push(projectilePool.get().init(
                             this.x + Math.cos(angle) * 20, 
                             this.y + Math.sin(angle) * 20, 
-                            { x: Math.cos(angle) * 12, y: Math.sin(angle) * 12 }
+                            vel
                         ));
                     });
                 }
@@ -666,26 +814,38 @@
         }
 
         class Projectile {
-            constructor(x, y, velocity) {
+            constructor() {
+                // Initialize with default/empty values
+                this.x = 0;
+                this.y = 0;
+                this.velocity = { x: 0, y: 0 };
+                this.radius = 3;
+                this.color = '#ffff00';
+                this.markedForDeletion = false;
+            }
+
+            init(x, y, velocity) {
                 this.x = x;
                 this.y = y;
                 this.velocity = velocity;
-                this.radius = 3;
-                this.color = '#ffff00'; // Yellow
+                this.markedForDeletion = false;
+                return this; // for chaining
             }
 
-            draw() {
-                // Optimization: Removed shadowBlur and save/restore
+            draw(ctx, view) {
+                // Culling check
+                if (this.x + this.radius < view.x - view.buffer || this.x - this.radius > view.x + view.width + view.buffer ||
+                    this.y + this.radius < view.y - view.buffer || this.y - this.radius > view.y + view.height + view.buffer) {
+                    return;
+                }
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2, false);
-                ctx.fillStyle = this.color;
                 ctx.fill();
             }
 
-            update() {
-                this.x += this.velocity.x;
-                this.y += this.velocity.y;
-                this.draw();
+            update(dt) {
+                this.x += this.velocity.x * 60 * dt;
+                this.y += this.velocity.y * 60 * dt;
             }
         }
 
@@ -797,7 +957,13 @@
                 }
             }
 
-            draw() {
+            draw(ctx, view) {
+                // Culling check
+                if (this.x + this.radius < view.x - view.buffer || this.x - this.radius > view.x + view.width + view.buffer ||
+                    this.y + this.radius < view.y - view.buffer || this.y - this.radius > view.y + view.height + view.buffer) {
+                    return;
+                }
+
                 ctx.save();
                 ctx.translate(this.x, this.y);
                 ctx.rotate(this.angle);
@@ -926,7 +1092,7 @@
                 ctx.restore();
             }
 
-            update() {
+            update(dt) {
                 if (!player.alive) return;
 
                 // Safety check for NaN coordinates (prevents ghost enemies)
@@ -970,6 +1136,11 @@
                     }
                     if ((this.y - this.radius < 0 && this.velocity.y < 0) || (this.y + this.radius > world.height && this.velocity.y > 0)) {
                         this.velocity.y *= -1;
+                    }
+
+                    // Pull Grid
+                    if (grid) {
+                        grid.applyForce(this.x, this.y, 300, -0.8);
                     }
 
                     // Pull Player
@@ -1028,9 +1199,11 @@
                     this.x = world.width / 2 + Math.sin(frame * 0.02) * (world.width * 0.2);
                     this.y = world.height / 2 + Math.sin(frame * 0.04) * (world.height * 0.2);
                     
-                    // Spawn Darts
-                    if (frame % 60 === 0) {
+                    // Spawn Darts (time-based)
+                    this.spawnTimer = (this.spawnTimer || 0) + dt;
+                    if (this.spawnTimer > 1) { // Every 1 second
                         enemies.push(new Enemy(this.x, this.y, 'dart'));
+                        this.spawnTimer = 0;
                     }
                     return; // Override default movement
                 }
@@ -1041,9 +1214,11 @@
                     this.velocity.x = Math.cos(angle);
                     this.velocity.y = Math.sin(angle);
                     
-                    // Spawn Mini-Titans
-                    if (frame % 120 === 0) {
+                    // Spawn Mini-Titans (time-based)
+                    this.spawnTimer = (this.spawnTimer || 0) + dt;
+                    if (this.spawnTimer > 2) { // Every 2 seconds
                         enemies.push(new Enemy(this.x, this.y, 'mini-titan'));
+                        this.spawnTimer = 0;
                     }
                 }
 
@@ -1053,7 +1228,8 @@
                     if (hpPercent > 0.66) {
                         // Phase 1: Stationary, Spawn Arrows
                         this.velocity = {x: 0, y: 0};
-                        if (frame % 90 === 0) {
+                        this.spawnTimer = (this.spawnTimer || 0) + dt;
+                        if (this.spawnTimer > 1.5) { // Every 1.5 seconds
                             for(let i=-2; i<=2; i++) {
                                 const arrow = new Enemy(this.x, this.y, 'arrow');
                                 const angle = Math.atan2(player.y - this.y, player.x - this.x) + i * 0.2;
@@ -1062,6 +1238,7 @@
                                 arrow.angle = angle; // Rotate sprite
                                 enemies.push(arrow);
                             }
+                            this.spawnTimer = 0;
                         }
                     } else if (hpPercent > 0.33) {
                         // Phase 2: Spawn Mini-Boss
@@ -1099,9 +1276,9 @@
                 }
                 // --- END BEHAVIOR LOGIC ---
 
-                this.x += this.velocity.x * this.speed;
-                this.y += this.velocity.y * this.speed;
-                this.angle += this.spinSpeed;
+                this.x += this.velocity.x * this.speed * 60 * dt;
+                this.y += this.velocity.y * this.speed * 60 * dt;
+                this.angle += this.spinSpeed * 60 * dt;
 
                 // New Rule: Despawn if enemy leaves the play area
                 const offscreenBuffer = 100;
@@ -1109,44 +1286,57 @@
                     this.y < -offscreenBuffer || this.y > world.height + offscreenBuffer) {
                     this.markedForDeletion = true;
                 }
-
-                this.draw();
             }
         }
 
         class Particle {
-            constructor(x, y, color) {
+            constructor() {
+                this.x = 0;
+                this.y = 0;
+                this.color = '#fff';
+                this.radius = 1;
+                this.markedForDeletion = false;
+                this.velocity = { x: 0, y: 0 };
+                this.alpha = 1;
+                this.friction = 0.97;
+            }
+
+            init(x, y, color) {
                 this.x = x;
                 this.y = y;
                 this.color = color;
                 this.radius = Math.random() * 2;
                 const velocityMultiplier = Math.random() * 5;
-                this.markedForDeletion = false;
                 const angle = Math.random() * Math.PI * 2;
-                this.velocity = {
-                    x: Math.cos(angle) * velocityMultiplier,
-                    y: Math.sin(angle) * velocityMultiplier
-                };
+                this.velocity.x = Math.cos(angle) * velocityMultiplier;
+                this.velocity.y = Math.sin(angle) * velocityMultiplier;
                 this.alpha = 1;
-                this.friction = 0.97;
+                this.markedForDeletion = false;
+                return this;
             }
 
-            draw() {
+            draw(ctx, view) {
+                // Culling check
+                if (this.x + this.radius < view.x - view.buffer || this.x - this.radius > view.x + view.width + view.buffer ||
+                    this.y + this.radius < view.y - view.buffer || this.y - this.radius > view.y + view.height + view.buffer) {
+                    return;
+                }
+
                 ctx.globalAlpha = this.alpha;
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2, false);
                 ctx.fillStyle = this.color;
                 ctx.fill();
-                ctx.globalAlpha = 1;
             }
 
-            update() {
-                this.velocity.x *= this.friction;
-                this.velocity.y *= this.friction;
-                this.x += this.velocity.x;
-                this.y += this.velocity.y;
-                if ((this.alpha -= 0.02) <= 0) this.markedForDeletion = true;
-                this.draw();
+            update(dt) {
+                const frictionFactor = Math.pow(this.friction, dt * 60);
+                this.velocity.x *= frictionFactor;
+                this.velocity.y *= frictionFactor;
+                this.x += this.velocity.x * 60 * dt;
+                this.y += this.velocity.y * 60 * dt;
+                // Fade out over time, independent of frame rate (1.2 = 0.02 * 60)
+                if ((this.alpha -= 1.2 * dt) <= 0) this.markedForDeletion = true;
             }
         }
 
@@ -1167,31 +1357,37 @@
                 this.markedForDeletion = false;
             }
 
-            draw() {
+            draw(ctx, view) {
+                // Culling check
+                if (this.x + this.radius < view.x - view.buffer || this.x - this.radius > view.x + view.width + view.buffer ||
+                    this.y + this.radius < view.y - view.buffer || this.y - this.radius > view.y + view.height + view.buffer) {
+                    return;
+                }
+
                 ctx.save();
                 ctx.translate(this.x, this.y);
-                ctx.rotate(Math.PI / 4); // Rotate to make it a diamond
-                
-                ctx.shadowBlur = 8;
-                ctx.shadowColor = this.color;
+                ctx.rotate(Math.PI / 4);
 
-                ctx.beginPath();
                 const size = this.radius * 1.2;
-                ctx.rect(-size, -size, size * 2, size * 2);
+
+                // Manual glow (much faster than shadowBlur)
+                ctx.globalAlpha = 0.25;
                 ctx.fillStyle = this.color;
-                ctx.fill();
-                
+                ctx.fillRect(-size * 2, -size * 2, size * 4, size * 4);
+
+                ctx.globalAlpha = 1;
+                ctx.fillRect(-size, -size, size * 2, size * 2);
                 ctx.restore();
             }
 
-            update() {
+            update(dt) {
                 const distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
 
                 if (distToPlayer < this.attractionRadius && player.alive) {
                     // Powerful attraction
                     const angleToPlayer = Math.atan2(player.y - this.y, player.x - this.x);
-                    this.velocity.x += Math.cos(angleToPlayer) * this.attractionForce;
-                    this.velocity.y += Math.sin(angleToPlayer) * this.attractionForce;
+                    this.velocity.x += Math.cos(angleToPlayer) * this.attractionForce * 60 * dt;
+                    this.velocity.y += Math.sin(angleToPlayer) * this.attractionForce * 60 * dt;
 
                     // Cap speed to maxSpeed
                     const currentSpeed = Math.hypot(this.velocity.x, this.velocity.y);
@@ -1201,8 +1397,8 @@
                     }
                 }
 
-                this.x += this.velocity.x;
-                this.y += this.velocity.y;
+                this.x += this.velocity.x * 60 * dt;
+                this.y += this.velocity.y * 60 * dt;
 
                 // Wall Boundaries - Bounce to stay in play area
                 if ((this.x - this.radius < 0 && this.velocity.x < 0) || (this.x + this.radius > world.width && this.velocity.x > 0)) {
@@ -1211,8 +1407,6 @@
                 if ((this.y - this.radius < 0 && this.velocity.y < 0) || (this.y + this.radius > world.height && this.velocity.y > 0)) {
                     this.velocity.y *= -1;
                 }
-
-                this.draw();
             }
         }
 
@@ -1222,6 +1416,8 @@
         let projectiles = [];
         let enemies = [];
         let particles = [];
+        let spawnTimer = 0;
+        let cornerSpawnTimer = 0;
         
         function addScore(points) {
             score += points;
@@ -1301,14 +1497,14 @@
             setTimeout(() => { title.style.opacity = '0'; setTimeout(() => title.remove(), 1000); }, 2000);
         }
 
-        function spawnEnemies() {
+        function spawnEnemies(dt) {
             // Boss Level Logic
             if (level % 3 === 0) {
                 if (!bossSpawned) {
                     let type = 'sapphire';
                     if (level === 6) type = 'ruby';
                     if (level === 9) type = 'emerald';
-                    if (level > 9) type = ['sapphire', 'ruby', 'emerald'][Math.floor(Math.random()*3)];
+                    if (level > 9) type = ['sapphire', 'ruby', 'emerald'][Math.floor(Math.random() * 3)];
                     
                     const boss = new Enemy(canvas.width/2, -100, type);
                     boss.y = 100; // Move into view
@@ -1318,21 +1514,27 @@
                 return; // Boss handles spawning
             }
             
-            // Spawn every second
-            if (frame % 60 !== 0) return;
+            spawnTimer += dt;
+            cornerSpawnTimer += dt;
+
+            // Only attempt to spawn on a timer to avoid spawning every frame
+            if (spawnTimer < 1.0) return; // Try to spawn every 1 second
+            spawnTimer = 0; // Reset timer
 
             // Level Duration Check
-            if (levelFrame > 1800) return;
+            const levelDuration = 30; // 30 seconds per level
+            if (levelFrame > levelDuration) return;
 
             // Enemy Cap Logic: Scales from ~15 (Level 1) to ~100 (Level 10+)
             // This prevents overcrowding while allowing death spawns (Splitters) to exceed the limit.
             const enemyCap = 15 + (level * 8);
             if (enemies.length >= enemyCap) return;
 
-            const radius = 30; // Increased padding for corner spawns
+            const radius = 30;
 
-            // Every 5 seconds (300 frames), trigger a corner spawn event
-            if (frame > 0 && frame % 300 === 0) {
+            // Every 5 seconds, trigger a corner spawn event
+            if (cornerSpawnTimer > 5.0) {
+                cornerSpawnTimer = 0; // Reset corner spawn timer
                 const corners = [
                     { x: -radius, y: -radius }, // Top-Left
                     { x: world.width + radius, y: -radius }, // Top-Right
@@ -1351,7 +1553,7 @@
                         enemies.push(new Enemy(spawnX, spawnY, enemyType));
                     }
                 });
-                return; // Skip the regular spawn on this frame
+                return; // Skip the regular edge spawn on this frame
             }
 
             // --- Regular Edge Spawn ---
@@ -1405,6 +1607,7 @@
             bombs--;
             bombsEl.innerHTML = bombs;
             sounds.bomb();
+            if (grid) grid.applyForce(player.x, player.y, 1000, 60);
 
             // Trigger visual effect. The actual destruction is handled
             // by the growing circle in the animate() loop.
@@ -1415,8 +1618,9 @@
 
         function createExplosion(x, y, color) {
             sounds.explode();
+            if (grid) grid.applyForce(x, y, 150, 12);
             for (let i = 0; i < 15; i++) {
-                particles.push(new Particle(x, y, color));
+                particles.push(particlePool.get().init(x, y, color));
             }
         }
 
@@ -1458,6 +1662,8 @@
             level = 1;
             levelFrame = 0;
             bossSpawned = false;
+            spawnTimer = 0;
+            cornerSpawnTimer = 0;
             waveMsg.classList.add('hidden');
             showLinesCheck.checked = false; debugShowLines = false;
             infiniteLivesCheck.checked = false; infiniteLives = false;
@@ -1466,6 +1672,9 @@
             enemies = [];
             particles = [];
             orbs = [];
+            projectilePool = new Pool(Projectile, 200);
+            particlePool = new Pool(Particle, 1000);
+            grid = new Grid(world.width, world.height, 50);
             player = new Player(world.width / 2, world.height / 2);
             gameActive = true;
             startScreen.classList.add('hidden');
@@ -1494,10 +1703,16 @@
             animationId = requestAnimationFrame(animate);
             
             const now = performance.now();
+            // Calculate delta time (dt) for frame-rate independent physics
+            // Cap dt to prevent huge jumps after pausing or lag spikes
+            const dt = Math.min(0.05, (now - lastTimeForDt) / 1000);
+            lastTimeForDt = now;
 
             // Convert mouse screen coordinates to world coordinates
             mouse.x = (mouse.screenX - canvas.width / 2) / camera.zoom + camera.x;
             mouse.y = (mouse.screenY - canvas.height / 2) / camera.zoom + camera.y;
+
+            // --- GAME LOGIC & UPDATES ---
 
             // Camera update (smooth follow)
             if (player.alive) {
@@ -1505,154 +1720,91 @@
                 camera.y += (player.y - camera.y) * camera.lerpFactor;
             }
 
-            fpsFrames++;
-            if (now - lastTime >= 1000) {
-                fpsCounterEl.innerText = `FPS: ${fpsFrames}`;
-                fpsFrames = 0;
-                lastTime = now;
-            }
-
+            // State updates
             frame++;
-            levelFrame++;
-            enemiesAliveCounterEl.innerText = `Enemies Alive: ${enemies.length}`;
+            levelFrame += dt; // Use dt for level timer
 
-            // Level Progression
-            if (level % 3 !== 0) {
-                if (levelFrame > 1800) {
+            // Level Progression Logic
+            if (level % 3 !== 0) { // Non-boss levels
+                const levelDuration = 30; // 30 seconds per level
+                if (levelFrame > levelDuration) {
                     if (enemies.length === 0) {
                         advanceLevel();
-                        waveMsg.classList.add('hidden');
                     } else {
                         waveMsg.innerText = `ENEMIES REMAINING: ${enemies.length}`;
                         waveMsg.classList.remove('hidden');
                     }
-                } else {
-                    waveMsg.classList.add('hidden');
                 }
-            } else {
-                // Boss Level Failsafe: If boss is gone (e.g. rammed by player), advance
+            } else { // Boss Level Failsafe
                 if (bossSpawned && enemies.length === 0) {
                     advanceLevel();
                 }
             }
 
-            // Clear Canvas with fade effect for trails
-            ctx.fillStyle = 'rgba(5, 5, 5, 0.3)'; 
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Apply camera transformations
-            ctx.save();
-            ctx.translate(canvas.width / 2, canvas.height / 2);
-
-            ctx.scale(camera.zoom, camera.zoom);
-            ctx.translate(-camera.x, -camera.y);
-
-            // Draw Grid
-            ctx.save();
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-            ctx.lineWidth = 1;
-            const gridSize = 50;
-            for (let x = 0; x <= world.width; x += gridSize) {
-                ctx.beginPath();
-                ctx.moveTo(x, 0);
-                ctx.lineTo(x, world.height);
-                ctx.stroke();
-            }
-            for (let y = 0; y <= world.height; y += gridSize) {
-                ctx.beginPath();
-                ctx.moveTo(0, y);
-                ctx.lineTo(world.width, y);
-                ctx.stroke();
-            }
-            ctx.restore();
-
-            // Draw Bomb Effect
-            if (bombEffect.active) {
-                bombEffect.radius += 50; // Fast expansion
-                bombEffect.alpha -= 0.02;
-
-                if (bombEffect.alpha <= 0) {
-                    bombEffect.active = false;
-                } else {
-                    // Check for enemy hits
-                    enemies.forEach(enemy => {
-                        const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
-                        if (dist < bombEffect.radius + enemy.radius) {
-                            if (!enemy.markedForDeletion) orbs.push(new Orb(enemy.x, enemy.y));
-                            enemy.markedForDeletion = true;
-                            createExplosion(enemy.x, enemy.y, enemy.color);
-                            addScore(100); // Score for bomb kill
-                        }
-                    });
-
-                    ctx.save();
-                    ctx.beginPath();
-                    ctx.arc(player.x, player.y, bombEffect.radius, 0, Math.PI * 2);
-                    ctx.strokeStyle = `rgba(255, 255, 255, ${bombEffect.alpha})`;
-                    ctx.lineWidth = 10;
-                    ctx.stroke();
-                    ctx.restore();
-                }
-            }
-
-            if (debugShowLines) {
-                ctx.save();
-                ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
-                ctx.lineWidth = 1;
-                enemies.forEach(e => {
-                    ctx.beginPath();
-                    ctx.moveTo(player.x, player.y);
-                    ctx.lineTo(e.x, e.y);
-                    ctx.stroke();
-                });
-                ctx.restore();
-            }
-
-            player.update();
-
-            // Update Orbs
-            orbs.forEach(orb => {
-                orb.update();
-
-                // Collision: Orb vs Player
-                if (player.alive) {
-                    const dist = Math.hypot(player.x - orb.x, player.y - orb.y);
-                    if (dist < player.radius + orb.radius) {
-                        orb.markedForDeletion = true;
-                        addScore(25);
-                        sounds.collect();
-                    }
-                }
-            });
-            // Update Particles
-            particles.forEach(p => p.update());
-
-            // Update Projectiles
-            projectiles.forEach((projectile, index) => {
-                projectile.update();
-
-                // Remove off-screen projectiles
-                if (projectile.x + projectile.radius < 0 || // Check against world boundaries
+            // Update all game objects
+            player.update(dt, now);
+            orbs.forEach(orb => orb.update(dt));
+            particles.forEach(p => p.update(dt));
+            projectiles.forEach(projectile => {
+                projectile.update(dt);
+                // Remove off-screen projectiles (check against world boundaries)
+                if (projectile.x + projectile.radius < 0 ||
                     projectile.x - projectile.radius > world.width ||
                     projectile.y + projectile.radius < 0 ||
                     projectile.y - projectile.radius > world.height) {
                     projectile.markedForDeletion = true;
                 }
             });
+            enemies.forEach(enemy => enemy.update(dt));
 
-            // Update Enemies
+            // Collision detection & other logic
+            // Bomb Effect Logic
+            if (bombEffect.active) {
+                bombEffect.radius += 3000 * dt; // 50 * 60
+                bombEffect.alpha -= 1.2 * dt;   // 0.02 * 60
+
+                if (bombEffect.alpha <= 0) {
+                    bombEffect.active = false;
+                } else {
+                    // Check for enemy hits
+                    enemies.forEach(enemy => { // Using squared distance is faster
+                        const distSq = (player.x - enemy.x)**2 + (player.y - enemy.y)**2;
+                        if (distSq < (bombEffect.radius + enemy.radius)**2) {
+                            if (!enemy.markedForDeletion) orbs.push(new Orb(enemy.x, enemy.y));
+                            enemy.markedForDeletion = true;
+                            createExplosion(enemy.x, enemy.y, enemy.color);
+                            addScore(100); // Score for bomb kill
+                        }
+                    });
+                }
+            }
+
+            // Orb vs Player Collision
+            orbs.forEach(orb => {
+                if (player.alive) {
+                    const distSq = (player.x - orb.x)**2 + (player.y - orb.y)**2;
+                    if (distSq < (player.radius + orb.radius)**2) {
+                        orb.markedForDeletion = true;
+                        addScore(25);
+                        sounds.collect();
+                    }
+                }
+            });
+
+            // Projectile vs Enemy & Enemy vs Player Collisions
             enemies.forEach((enemy, index) => {
-                enemy.update();
-
                 // Collision: Projectile vs Enemy
                 projectiles.forEach((projectile, pIndex) => {
-                    // Optimization: Bounding box check
-                    if (Math.abs(projectile.x - enemy.x) > enemy.radius + projectile.radius + 5 ||
-                        Math.abs(projectile.y - enemy.y) > enemy.radius + projectile.radius + 5) return;
+                    const combinedRadius = enemy.radius + projectile.radius;
+                    // Optimization: Broad-phase bounding box check
+                    if (Math.abs(projectile.x - enemy.x) > combinedRadius + 5 ||
+                        Math.abs(projectile.y - enemy.y) > combinedRadius + 5) return;
 
-                    const dist = Math.hypot(projectile.x - enemy.x, projectile.y - enemy.y);
-
-                    if (dist - enemy.radius - projectile.radius < 1) {
+                    // Optimization: Narrow-phase circle collision using squared distance (avoids sqrt)
+                    const dx = projectile.x - enemy.x;
+                    const dy = projectile.y - enemy.y;
+                    const distSq = dx * dx + dy * dy;
+                    if (distSq < combinedRadius * combinedRadius) {
                         if (enemy.markedForDeletion) return;
 
                         if (enemy.type === 'snake-body') return; // snake bodies are invulnerable
@@ -1722,12 +1874,13 @@
                 // Gravity Well Absorption Logic
                 if (enemy.type === 'gravity-well') {
                     enemies.forEach((other, otherIndex) => {
-                        if (other !== enemy && other.type !== 'gravity-well' && other.type !== 'proton') {
-                            if (Math.abs(enemy.x - other.x) > enemy.radius + other.radius + 5 ||
-                                Math.abs(enemy.y - other.y) > enemy.radius + other.radius + 5) return;
+                        if (other !== enemy && other.type !== 'gravity-well' && other.type !== 'proton') { // Using squared distance is faster
+                            const combinedRadius = enemy.radius + other.radius;
+                            if (Math.abs(enemy.x - other.x) > combinedRadius + 5 ||
+                                Math.abs(enemy.y - other.y) > combinedRadius + 5) return;
 
-                            const dist = Math.hypot(enemy.x - other.x, enemy.y - other.y);
-                            if (dist < enemy.radius + other.radius) {
+                            const distSq = (enemy.x - other.x)**2 + (enemy.y - other.y)**2;
+                            if (distSq < combinedRadius * combinedRadius) {
                                 // Absorb
                                 createExplosion(other.x, other.y, enemy.color);
                                 other.markedForDeletion = true;
@@ -1758,9 +1911,10 @@
                 }
 
                 // Collision: Enemy vs Player
-                if (player.alive && !player.invulnerable) {
-                    const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
-                    if (dist - enemy.radius - player.radius < 1) {
+                if (player.alive && !player.invulnerable) { // Using squared distance is faster
+                    const combinedRadius = player.radius + enemy.radius;
+                    const distSq = (player.x - enemy.x)**2 + (player.y - enemy.y)**2;
+                    if (distSq < combinedRadius * combinedRadius) {
                         // Player Hit
                         createExplosion(player.x, player.y, player.color);
                         if (!infiniteLives) {
@@ -1792,15 +1946,107 @@
             });
 
             // Cleanup marked objects
-            enemies = enemies.filter(e => !e.markedForDeletion);
-            projectiles = projectiles.filter(p => !p.markedForDeletion);
-            particles = particles.filter(p => !p.markedForDeletion);
-            orbs = orbs.filter(o => !o.markedForDeletion);
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                if (enemies[i].markedForDeletion) enemies.splice(i, 1);
+            }
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                if (projectiles[i].markedForDeletion) {
+                    projectilePool.release(projectiles[i]);
+                    projectiles.splice(i, 1);
+                }
+            }
+            for (let i = particles.length - 1; i >= 0; i--) {
+                if (particles[i].markedForDeletion) {
+                    particlePool.release(particles[i]);
+                    particles.splice(i, 1);
+                }
+            }
+            for (let i = orbs.length - 1; i >= 0; i--) {
+                if (orbs[i].markedForDeletion) orbs.splice(i, 1);
+            }
 
-            spawnEnemies();
+            // Spawning
+            spawnEnemies(dt);
 
-            // Restore context to pre-camera state for any potential UI drawing on canvas
+            // --- RENDER ---
+
+            // Clear Canvas with fade effect for trails
+            ctx.fillStyle = 'rgba(5, 5, 5, 0.3)'; 
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Apply camera transformations
+            ctx.save();
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.scale(camera.zoom, camera.zoom);
+            ctx.translate(-camera.x, -camera.y);
+
+            // Calculate view bounds for culling
+            const view = {
+                x: camera.x - (canvas.width / 2 / camera.zoom),
+                y: camera.y - (canvas.height / 2 / camera.zoom),
+                width: canvas.width / camera.zoom,
+                height: canvas.height / camera.zoom,
+                buffer: 100 // Render objects 100px outside the view
+            };
+
+            // Update and Draw Grid (Grid update is visual, can be done here)
+            if (grid) {
+                if (player.alive) grid.applyForce(player.x, player.y, 80, 1.5);
+                enemies.forEach(e => grid.applyForce(e.x, e.y, e.radius * 2, 0.5));
+                grid.update();
+                grid.draw(ctx, view);
+            }
+
+            // Draw Bomb Effect
+            if (bombEffect.active) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, bombEffect.radius, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(255, 255, 255, ${bombEffect.alpha})`;
+                ctx.lineWidth = 10;
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            // Draw Debug Lines
+            if (debugShowLines) {
+                ctx.save();
+                ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+                ctx.lineWidth = 1;
+                enemies.forEach(e => {
+                    ctx.beginPath();
+                    ctx.moveTo(player.x, player.y);
+                    ctx.lineTo(e.x, e.y);
+                    ctx.stroke();
+                });
+                ctx.restore();
+            }
+
+            // Draw all other game objects
+            orbs.forEach(o => o.draw(ctx, view));
+            enemies.forEach(e => e.draw(ctx, view));
+
+            // Set fillStyle once for projectiles
+            ctx.fillStyle = '#ffff00';
+            projectiles.forEach(p => p.draw(ctx, view));
+
+            // Particles are special, they set globalAlpha
+            particles.forEach(p => p.draw(ctx, view));
+            ctx.globalAlpha = 1; // Reset alpha
+
+            player.draw(ctx); // Player doesn't need culling
+
+            // Restore context to pre-camera state for UI drawing
             ctx.restore();
+
+            // UI updates (FPS counter etc)
+            fpsFrames++;
+            if (now - lastTime >= 1000) {
+                fpsCounterEl.innerText = `FPS: ${fpsFrames}`;
+                fpsFrames = 0;
+                lastTime = now;
+            }
+            enemiesAliveCounterEl.innerText = `Enemies Alive: ${enemies.length}`;
         }
 
         function pollGamepadsForStart() {
@@ -1842,3 +2088,4 @@
     </script>
 </body>
 </html>
+

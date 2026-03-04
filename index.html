@@ -162,6 +162,11 @@
     <div id="enemies-alive-counter">Enemies Alive: 0</div>
 
     <!-- Start / Game Over Screen -->
+    <!-- MIDI Player Injection -->
+    <audio id="bg-music" loop>
+        <source src="track1.mp3" type="audio/mpeg">
+    </audio>
+
     <div id="start-screen">
         <h1 style="margin:0; text-shadow: 0 0 10px cyan;">NEON WARS</h1>
         <p id="final-score-msg" style="font-size: 14px; color: #aaa;">Defend the grid.</p>
@@ -284,69 +289,12 @@
         let musicSchedulerId = null;
 
         sounds.startMusic = () => {
-            if (musicSchedulerId) return; // Don't start if already running
-            if (!musicPlaying) musicPlaying = true;
-
-            const masterGain = audioCtx.createGain();
-            masterGain.gain.value = 0.08; // Music should be in the background
-            masterGain.connect(audioCtx.destination);
-
-            const sequence = [
-                { note: 'C2', duration: 0.5, chord: ['G3', 'C4', 'E4'] },
-                { note: 'G2', duration: 0.5, chord: ['G3', 'B3', 'D4'] },
-                { note: 'A#2', duration: 0.5, chord: ['A#3', 'D4', 'F4'] },
-                { note: 'F2', duration: 0.5, chord: ['F3', 'A3', 'C4'] },
-            ];
-            
-            const noteToFreq = (note) => {
-                const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-                const key = note.slice(0, -1);
-                const octave = parseInt(note.slice(-1));
-                const keyIndex = notes.indexOf(key);
-                const n = (octave - 4) * 12 + (keyIndex - 9);
-                return 440 * Math.pow(2, n / 12);
-            };
-
-            let nextNoteTime = audioCtx.currentTime;
-            let currentNoteIndex = 0;
-
-            const scheduleNotes = () => {
-                const lookahead = 0.5; // seconds
-                while (nextNoteTime < audioCtx.currentTime + lookahead) {
-                    const item = sequence[currentNoteIndex % sequence.length];
-                    
-                    // Bass
-                    const bassOsc = audioCtx.createOscillator();
-                    bassOsc.type = 'sawtooth';
-                    bassOsc.frequency.setValueAtTime(noteToFreq(item.note), nextNoteTime);
-                    const bassGain = audioCtx.createGain();
-                    bassGain.gain.setValueAtTime(0.5, nextNoteTime);
-                    bassGain.gain.exponentialRampToValueAtTime(0.01, nextNoteTime + item.duration * 0.9);
-                    bassOsc.connect(bassGain).connect(masterGain);
-                    bassOsc.start(nextNoteTime);
-                    bassOsc.stop(nextNoteTime + item.duration);
-
-                    // Arpeggio
-                    const arpDuration = 0.125;
-                    for (let i = 0; i < item.chord.length; i++) {
-                        const arpOsc = audioCtx.createOscillator();
-                        arpOsc.type = 'square';
-                        arpOsc.frequency.setValueAtTime(noteToFreq(item.chord[i]), nextNoteTime + i * arpDuration);
-                        const arpGain = audioCtx.createGain();
-                        arpGain.gain.setValueAtTime(0.2, nextNoteTime + i * arpDuration);
-                        arpGain.gain.exponentialRampToValueAtTime(0.01, nextNoteTime + (i + 1) * arpDuration);
-                        arpOsc.connect(arpGain).connect(masterGain);
-                        arpOsc.start(nextNoteTime + i * arpDuration);
-                        arpOsc.stop(nextNoteTime + (i + 1) * arpDuration);
-                    }
-
-                    nextNoteTime += item.duration;
-                    currentNoteIndex++;
-                }
-                musicSchedulerId = setTimeout(scheduleNotes, 100);
-            };
-
-            scheduleNotes();
+            const player = document.getElementById('bg-music');
+            if (player) {
+                player.volume = 0.6;
+                player.play().catch(e => console.error("Music failed:", e));
+                musicPlaying = true;
+            }
         };
 
         // UI Elements
@@ -388,6 +336,8 @@
         let nextLifeThreshold = 15000;
         let nextBombThreshold = 30000;
         let bombEffect = { active: false, radius: 0, alpha: 0 };
+        let hexSpawnTimers = [8, 16, 24]; // Times in seconds to guarantee a hex spawn
+        let hexSpawnsTriggered = 0;
         let orbs = [];
         let projectilePool;
         let particlePool;
@@ -524,6 +474,7 @@
                 this.height = height;
                 this.spacing = spacing;
                 this.cols = Math.ceil(width / spacing) + 1;
+               this.cols = Math.ceil(width / spacing) + 1;
                 this.rows = Math.ceil(height / spacing) + 1;
                 this.points = [];
                 for (let y = 0; y < this.rows; y++) {
@@ -534,7 +485,6 @@
                     this.points.push(row);
                 }
             }
-
             applyForce(x, y, radius, force) {
                 const minCol = Math.max(0, Math.floor((x - radius) / this.spacing));
                 const maxCol = Math.min(this.cols - 1, Math.ceil((x + radius) / this.spacing));
@@ -565,7 +515,6 @@
                     }
                 }
             }
-
             draw(ctx, view) {
                 ctx.save();
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
@@ -861,6 +810,7 @@
                 this.hp = 1;
                 this.absorbed = 0; // For Gravity Well
                 this.markedForDeletion = false;
+                this.dodgeCooldown = 0;
                 this.maxHp = 1; // Default
 
                 switch (this.type) {
@@ -910,6 +860,11 @@
                     case 'repulsor':
                         this.color = '#ff8c00'; // DarkOrange
                         this.speed = 7;
+                        break;
+                    case 'hex-dodger':
+                        this.radius = 22.5; // 50% larger than standard 15
+                        this.color = '#008080'; // Teal
+                        this.speed = 3;
                         break;
                     case 'sapphire':
                         this.radius = 40;
@@ -1002,6 +957,25 @@
                     ctx.closePath();
                     ctx.fillStyle = this.color;
                     ctx.fill();
+                } else if (this.type === 'hex-dodger') {
+                    // Hexagon
+                    ctx.beginPath();
+                    for (let i = 0; i < 6; i++) {
+                        const angle = i * Math.PI / 3;
+                        const x = Math.cos(angle) * this.radius;
+                        const y = Math.sin(angle) * this.radius;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.closePath();
+                    ctx.strokeStyle = this.color;
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                    // Inner Detail
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.radius * 0.4, 0, Math.PI * 2);
+                    ctx.fillStyle = this.color;
+                    ctx.fill();
                 } else if (this.type === 'proton' || this.type === 'spinner-mini') {
                     ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
                     ctx.fillStyle = this.color;
@@ -1032,7 +1006,10 @@
                     ctx.beginPath();
                     for (let i = 0; i < 6; i++) {
                         const angle = i * Math.PI / 3;
-                        ctx.lineTo(Math.cos(angle) * this.radius, Math.sin(angle) * this.radius);
+                        const x = Math.cos(angle) * this.radius;
+                        const y = Math.sin(angle) * this.radius;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
                     }
                     ctx.closePath();
                     ctx.strokeStyle = this.color;
@@ -1105,6 +1082,7 @@
 
                 // --- BEHAVIOR LOGIC ---
                 let isDodging = false;
+                this.dodgeCooldown = Math.max(0, this.dodgeCooldown - dt);
                 if (this.type === 'weaver') {
                     for (const p of projectiles) {
                         if (Math.abs(p.x - this.x) > 120 || Math.abs(p.y - this.y) > 120) continue;
@@ -1126,6 +1104,36 @@
                             }
                         }
                     }
+                }
+
+                // Hex Dodger Logic (Advanced Dodging)
+                if (this.type === 'hex-dodger' && this.dodgeCooldown <= 0) {
+                    for (const p of projectiles) {
+                        // Increased detection range
+                        if (Math.abs(p.x - this.x) > 400 || Math.abs(p.y - this.y) > 400) continue;
+                        const distSq = (p.x - this.x)**2 + (p.y - this.y)**2;
+                        if (distSq < 400**2) {
+                            const angleFromProj = Math.atan2(this.y - p.y, this.x - p.x);
+                            const projAngle = Math.atan2(p.velocity.y, p.velocity.x);
+                            let angleDiff = angleFromProj - projAngle;
+                            while (angleDiff <= -Math.PI) angleDiff += Math.PI*2;
+                            while (angleDiff > Math.PI) angleDiff -= Math.PI*2;
+                            
+                            // Wider detection cone
+                            if (Math.abs(angleDiff) < 1.2) {
+                                const dodgeDir = projAngle + (angleDiff > 0 ? -Math.PI/2 : Math.PI/2);
+                                // Faster dodge speed
+                                this.velocity.x = Math.cos(dodgeDir) * 6;
+                                this.velocity.y = Math.sin(dodgeDir) * 6;
+                                isDodging = true;
+                                this.dodgeCooldown = 0.2; // Commit to dodge for 0.2s
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (this.type === 'hex-dodger' && this.dodgeCooldown > 0) {
+                    isDodging = true;
                 }
 
                 // Gravity Well Logic
@@ -1263,7 +1271,7 @@
                 }
 
                 // Default chase behavior if not performing a special action (like dodging)
-                if (!isDodging && this.type !== 'gravity-well' && !this.type.startsWith('snake') && !['sapphire', 'emerald', 'ruby'].includes(this.type)) {
+                if (!isDodging && this.type !== 'gravity-well' && !this.type.startsWith('snake') && !['sapphire', 'emerald', 'ruby', 'hex-dodger'].includes(this.type)) {
                     this.velocity.x = Math.cos(angleToPlayer);
                     this.velocity.y = Math.sin(angleToPlayer);
                     
@@ -1273,6 +1281,15 @@
                         this.velocity.x += Math.cos(this.angleOffset) * 0.5;
                         this.velocity.y += Math.sin(this.angleOffset) * 0.5;
                     }
+                }
+
+                // Hex Dodger Movement (Bouncy/Wavy)
+                if (!isDodging && this.type === 'hex-dodger') {
+                     const angleToPlayer = Math.atan2(player.y - this.y, player.x - this.x);
+                     const wave = Math.sin(frame * 0.1) * 1.0; 
+                     const moveAngle = angleToPlayer + wave;
+                     this.velocity.x = Math.cos(moveAngle);
+                     this.velocity.y = Math.sin(moveAngle);
                 }
                 // --- END BEHAVIOR LOGIC ---
 
@@ -1355,6 +1372,7 @@
                 this.attractionForce = 1.5; // Increased force
                 this.maxSpeed = 15; // Increased speed
                 this.markedForDeletion = false;
+                this.life = 7.0;
             }
 
             draw(ctx, view) {
@@ -1370,17 +1388,29 @@
 
                 const size = this.radius * 1.2;
 
+                // Blink effect in last 2 seconds
+                let alpha = 1;
+                if (this.life < 2) {
+                    if (Math.floor(this.life * 5) % 2 === 0) {
+                        alpha = 0.3;
+                    }
+                }
+
                 // Manual glow (much faster than shadowBlur)
-                ctx.globalAlpha = 0.25;
+                ctx.globalAlpha = 0.25 * alpha;
                 ctx.fillStyle = this.color;
                 ctx.fillRect(-size * 2, -size * 2, size * 4, size * 4);
 
-                ctx.globalAlpha = 1;
+                ctx.globalAlpha = 1 * alpha;
                 ctx.fillRect(-size, -size, size * 2, size * 2);
                 ctx.restore();
             }
 
             update(dt) {
+                this.life -= dt;
+                if (this.life <= 0) {
+                    this.markedForDeletion = true;
+                }
                 const distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
 
                 if (distToPlayer < this.attractionRadius && player.alive) {
@@ -1474,6 +1504,7 @@
             enemies.forEach(e => e.markedForDeletion = true); // Clear all enemies
             level++;
             levelFrame = 0;
+            hexSpawnsTriggered = 0;
             bossSpawned = false;
             levelEl.innerText = level;
             waveMsg.classList.add('hidden');
@@ -1514,6 +1545,21 @@
                 return; // Boss handles spawning
             }
             
+            // --- Guaranteed Hex-Dodger Spawns ---
+            if (hexSpawnsTriggered < hexSpawnTimers.length && levelFrame >= hexSpawnTimers[hexSpawnsTriggered]) {
+                const radius = 30;
+                let x, y;
+                if (Math.random() < 0.5) {
+                    x = Math.random() < 0.5 ? 0 - radius : world.width + radius;
+                    y = Math.random() * world.height;
+                } else {
+                    x = Math.random() * world.width;
+                    y = Math.random() < 0.5 ? 0 - radius : world.height + radius;
+                }
+                enemies.push(new Enemy(x, y, 'hex-dodger'));
+                hexSpawnsTriggered++;
+            }
+
             spawnTimer += dt;
             cornerSpawnTimer += dt;
 
@@ -1594,8 +1640,9 @@
                 return;
             } else if (rand < 0.20) enemyType = 'repulsor';
             else if (rand < 0.28) enemyType = 'gravity-well';
-            else if (rand < 0.45) enemyType = 'spinner';
-            else if (rand < 0.65) enemyType = 'weaver';
+            else if (rand < 0.50) enemyType = 'hex-dodger'; // Increased spawn chance
+            else if (rand < 0.60) enemyType = 'spinner';
+            else if (rand < 0.75) enemyType = 'weaver';
             else enemyType = 'grunt';
 
             enemies.push(new Enemy(x, y, enemyType));
@@ -1625,8 +1672,8 @@
         }
 
         function togglePause() {
-            if (!gameActive) return;
 
+           
             isPaused = !isPaused;
 
             if (isPaused) {
@@ -1634,10 +1681,8 @@
                 cancelAnimationFrame(animationId);
                 pauseMenu.classList.remove('hidden');
                 // Stop music scheduler
-                if (musicSchedulerId) {
-                    clearTimeout(musicSchedulerId);
-                    musicSchedulerId = null;
-                }
+               const player = document.getElementById('bg-music');
+                if (player) player.pause();
             } else {
                 // Resume the game
                 pauseMenu.classList.add('hidden');
@@ -1661,6 +1706,7 @@
             bombsEl.innerHTML = bombs;
             level = 1;
             levelFrame = 0;
+            hexSpawnsTriggered = 0;
             bossSpawned = false;
             spawnTimer = 0;
             cornerSpawnTimer = 0;
@@ -1678,6 +1724,9 @@
             player = new Player(world.width / 2, world.height / 2);
             gameActive = true;
             startScreen.classList.add('hidden');
+            const musicPlayer = document.getElementById('bg-music');
+            if (musicPlayer) musicPlayer.currentTime = 0; // Restart music from beginning
+
             sounds.startMusic();
             animate();
             showLevelTitle("LEVEL 1", "white");
@@ -1689,6 +1738,8 @@
             startScreen.classList.remove('hidden');
             finalScoreMsg.innerText = `Final Score: ${score}`;
             startBtn.innerText = "Play Again";
+            const player = document.getElementById('bg-music');
+            if (player) player.pause();
             
             if (score > highScore) {
                 highScore = score;
@@ -1707,7 +1758,6 @@
             // Cap dt to prevent huge jumps after pausing or lag spikes
             const dt = Math.min(0.05, (now - lastTimeForDt) / 1000);
             lastTimeForDt = now;
-
             // Convert mouse screen coordinates to world coordinates
             mouse.x = (mouse.screenX - canvas.width / 2) / camera.zoom + camera.x;
             mouse.y = (mouse.screenY - canvas.height / 2) / camera.zoom + camera.y;
@@ -1800,6 +1850,7 @@
                     if (Math.abs(projectile.x - enemy.x) > combinedRadius + 5 ||
                         Math.abs(projectile.y - enemy.y) > combinedRadius + 5) return;
 
+                   
                     // Optimization: Narrow-phase circle collision using squared distance (avoids sqrt)
                     const dx = projectile.x - enemy.x;
                     const dy = projectile.y - enemy.y;
@@ -1827,7 +1878,7 @@
                         // Spawn orb BEFORE checking for boss type
                         if (enemy.hp <= 0 && !['sapphire', 'ruby', 'emerald'].includes(enemy.type)) {
                             orbs.push(new Orb(enemy.x, enemy.y));
-                        }
+                       }
 
                         if (enemy.hp <= 0) {
                             enemy.markedForDeletion = true;
@@ -1861,7 +1912,7 @@
                                 });
                             } else if (enemy.type === 'gravity-well') {
                                 for(let i=0; i<6; i++) {
-                                    const p = new Enemy(enemy.x, enemy.y, 'proton');
+                                   const p = new Enemy(enemy.x, enemy.y, 'proton');
                                     p.velocity.x = (Math.random() - 0.5) * 10;
                                     p.velocity.y = (Math.random() - 0.5) * 10;
                                     enemies.push(p);
@@ -1918,7 +1969,7 @@
                         // Player Hit
                         createExplosion(player.x, player.y, player.color);
                         if (!infiniteLives) {
-                            lives--;
+                           lives--;
                             livesEl.innerHTML = lives;
                             scoreStreak = 0;
                         }
@@ -1945,6 +1996,7 @@
                 }
             });
 
+           
             // Cleanup marked objects
             for (let i = enemies.length - 1; i >= 0; i--) {
                 if (enemies[i].markedForDeletion) enemies.splice(i, 1);
@@ -1973,7 +2025,7 @@
             // Clear Canvas with fade effect for trails
             ctx.fillStyle = 'rgba(5, 5, 5, 0.3)'; 
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-
+           
             // Apply camera transformations
             ctx.save();
             ctx.translate(canvas.width / 2, canvas.height / 2);
@@ -1992,7 +2044,7 @@
             // Update and Draw Grid (Grid update is visual, can be done here)
             if (grid) {
                 if (player.alive) grid.applyForce(player.x, player.y, 80, 1.5);
-                enemies.forEach(e => grid.applyForce(e.x, e.y, e.radius * 2, 0.5));
+               enemies.forEach(e => grid.applyForce(e.x, e.y, e.radius * 2, 0.5));
                 grid.update();
                 grid.draw(ctx, view);
             }
@@ -2011,7 +2063,7 @@
             // Draw Debug Lines
             if (debugShowLines) {
                 ctx.save();
-                ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+               ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
                 ctx.lineWidth = 1;
                 enemies.forEach(e => {
                     ctx.beginPath();
@@ -2072,7 +2124,7 @@
 
         function pollGamepadsForPause() {
             if (gamepadIndex !== null) {
-                const gp = navigator.getGamepads()[gamepadIndex];
+               const gp = navigator.getGamepads()[gamepadIndex];
                 if (gp && gp.buttons[9] && gp.buttons[9].pressed) {
                     if (!startButtonPressed) {
                         if (gameActive && (isPaused || frame > 10)) togglePause();
@@ -2088,4 +2140,3 @@
     </script>
 </body>
 </html>
-

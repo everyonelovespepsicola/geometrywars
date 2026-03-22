@@ -156,6 +156,7 @@
         <div class="hud-text" style="color: #ff0055;">LIVES: <span id="livesEl">3</span></div>
         <div class="hud-text" style="color: #00ffaa;">LEVEL: <span id="levelEl">1</span></div>
         <div class="hud-text" style="color: #ffaa00;">BOMBS: <span id="bombsEl">3</span></div>
+        <div class="hud-text" style="color: #00ffff;">BOOST: <span id="boostEl">0</span></div>
     </div>
 
     <div id="wave-msg" class="hidden"></div>
@@ -378,6 +379,7 @@
         const levelEl = document.getElementById('levelEl');
         const startScreen = document.getElementById('start-screen');
         const bombsEl = document.getElementById('bombsEl');
+        const boostEl = document.getElementById('boostEl');
         const startBtn = document.getElementById('start-btn');
         const finalScoreMsg = document.getElementById('final-score-msg');
         const pauseMenu = document.getElementById('pause-menu');
@@ -604,7 +606,8 @@
             }
             draw(ctx, view) {
                 ctx.save();
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+                const hue = (level * 60) % 360; // Rotate colors based on the level
+                ctx.strokeStyle = `hsla(${hue}, 100%, 80%, 0.1)`; // Pastel lightness with slight transparency
                 ctx.lineWidth = 1;
 
                 const minCol = Math.max(0, Math.floor((view.x - this.spacing) / this.spacing));
@@ -665,10 +668,12 @@
                 this.radius = 15;
                 this.color = '#ffffff'; // White
                 this.velocity = { x: 0, y: 0 };
-                this.speed = 1.386; // 20% faster (Max speed now ~9.24)
+                this.baseSpeed = 1.386; // Base movement speed
+                this.speed = this.baseSpeed;
                 this.friction = 0.85; // Lower friction fixes floaty/sluggish controls
                 this.alive = true;
-                this.invulnerable = false;
+                this.shieldTimeRemaining = 4.0; // 4 seconds of shield on spawn
+                this.invulnerable = true;
                 this.aimAngle = 0;
                 this.facingAngle = 0;
                 this.triggerLocked = false;
@@ -711,7 +716,7 @@
 
                 // Draw the main ship outline
                 ctx.lineWidth = 2;
-                ctx.strokeStyle = this.invulnerable && frame % 10 < 5 ? 'transparent' : this.color;
+                ctx.strokeStyle = this.color;
                 ctx.stroke();
 
                 // Inner Core
@@ -722,10 +727,24 @@
                 ctx.closePath();
 
                 // Fill and stroke the ship's core
-                ctx.fillStyle = this.invulnerable && frame % 10 < 5 ? 'transparent' : this.color;
+                ctx.fillStyle = this.color;
                 ctx.fill();
                 ctx.stroke();
                 
+                // Draw Shield
+                if (this.shieldTimeRemaining > 0) {
+                    ctx.save();
+                    ctx.globalAlpha = Math.min(1, this.shieldTimeRemaining); // Fades out smoothly in the last 1 second
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.radius + 15, 0, Math.PI * 2);
+                    ctx.strokeStyle = '#ffffff'; // White shield
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)'; // Light white fill
+                    ctx.fill();
+                    ctx.restore();
+                }
+
                 ctx.restore();
             }
 
@@ -733,6 +752,28 @@
                 // During the blinking respawn, the player is not alive and should not update.
                 // The check below handles this correctly.
                 if (!this.alive) return;
+
+                // --- Shield Timer Logic ---
+                if (this.shieldTimeRemaining > 0) {
+                    this.shieldTimeRemaining -= dt;
+                    this.invulnerable = true;
+                    if (this.shieldTimeRemaining <= 0) {
+                        this.shieldTimeRemaining = 0;
+                        this.invulnerable = false;
+                    }
+                }
+
+                // --- Speed Boost Logic (tied to Score Streak) ---
+                // Levels interleave nicely with gun upgrades at 10k and 20k
+                let speedMultiplier = 1.0;
+                if (scoreStreak >= 25000) {
+                    speedMultiplier = 1.175; // Level 3: +17.5% total (+5% +5% +7.5%)
+                } else if (scoreStreak >= 15000) {
+                    speedMultiplier = 1.10;  // Level 2: +10% total (+5% +5%)
+                } else if (scoreStreak >= 5000) {
+                    speedMultiplier = 1.05;  // Level 1: +5% total
+                }
+                this.speed = this.baseSpeed * speedMultiplier;
 
                 // Movement Logic
                 let moveX = 0;
@@ -880,8 +921,8 @@
 
             respawn() {
                 this.alive = true;
+                this.shieldTimeRemaining = 4.0;
                 this.invulnerable = true;
-                setTimeout(() => { this.invulnerable = false; }, 2000);
             }
         }
 
@@ -1331,7 +1372,8 @@
                             while (angleDiff > Math.PI) angleDiff -= Math.PI*2;
 
                             if (Math.abs(angleDiff) < 1.2) {
-                                const dodgeDir = angleToPlayer + (angleDiff > 0 ? (65 * Math.PI / 180) : -(65 * Math.PI / 180));
+                                const randomDodgeAngle = 75 + Math.random() * 15;
+                                const dodgeDir = angleToPlayer + (angleDiff > 0 ? (randomDodgeAngle * Math.PI / 180) : -(randomDodgeAngle * Math.PI / 180));
                                 // Faster dodge speed
                                 const dodgeSpeed = this.angry ? 14.4 : 7.2;
                                 this.velocity.x = Math.cos(dodgeDir) * dodgeSpeed;
@@ -1802,10 +1844,19 @@
         let spawnTimer = 0;
         let cornerSpawnTimer = 0;
         
+        function updateBoostUI() {
+            let boostLevel = 0;
+            if (scoreStreak >= 25000) boostLevel = 3;
+            else if (scoreStreak >= 15000) boostLevel = 2;
+            else if (scoreStreak >= 5000) boostLevel = 1;
+            boostEl.innerText = boostLevel;
+        }
+        
         function addScore(points) {
             score += points;
             scoreStreak += points;
             scoreEl.innerHTML = score;
+            updateBoostUI();
             
             if (score >= nextLifeThreshold) {
                 lives++;
@@ -2144,6 +2195,7 @@
             scoreEl.innerHTML = score;
             livesEl.innerHTML = lives;
             bombsEl.innerHTML = bombs;
+            updateBoostUI();
             level = 1;
             levelFrame = 0;
             hexSpawnsTriggered = 0;
@@ -2536,66 +2588,120 @@
                 }
 
                 // Collision: Enemy vs Player
-                if (player.alive && !player.invulnerable && !debugInvincible) { // Using squared distance is faster
-                    const combinedRadius = player.radius + enemy.radius;
+                if (player.alive && !debugInvincible) { // Using squared distance is faster
+                    let combinedRadius = player.radius + enemy.radius;
+                    let isShieldHit = false;
+                    
+                    if (player.shieldTimeRemaining > 0) {
+                        combinedRadius = player.radius + 15 + enemy.radius;
+                        isShieldHit = true;
+                    }
+                    
                     const distSq = (player.x - enemy.x)**2 + (player.y - enemy.y)**2;
                     if (distSq < combinedRadius * combinedRadius) {
-                        // Player Hit
-                        createExplosion(player.x, player.y, player.color);
-                        if (!infiniteLives) {
-                           lives--;
-                            livesEl.innerHTML = lives;
-                            scoreStreak = 0;
-                        }
-                        
-                        // Kill enemy that hit player
-                        if (enemy.type !== 'super-gravity-well') {
-                            enemy.markedForDeletion = true;
-                            if (enemy.type === 'snake-head') {
-                                enemy.segments.forEach(seg => {
-                                    seg.leader = null;
-                                    seg.scattered = true;
-                                    seg.hp = 1;
-                                    seg.speed = 6.0;
-                                    const explodeAngle = Math.random() * Math.PI * 2;
-                                    seg.velocity.x = Math.cos(explodeAngle);
-                                    seg.velocity.y = Math.sin(explodeAngle);
-                                });
-                            }
-                        }
-                        if (enemy.type !== 'hex-yoyo' && enemy.type !== 'super-gravity-well') {
-                            orbs.push(new Orb(enemy.x, enemy.y));
-                        } else if (enemy.type === 'hex-yoyo') {
-                            if (enemy.owner) {
-                                enemy.owner.yoyoOut = false;
-                                enemy.owner.nextYoyoMode = 'around-the-world';
-                                enemy.owner.angry = true;
-                            }
-                        }
+                        if (isShieldHit) {
+                            if (!enemy.markedForDeletion && !['sapphire', 'ruby', 'emerald'].includes(enemy.type)) {
+                                enemy.markedForDeletion = true;
+                                createExplosion(enemy.x, enemy.y, enemy.color);
+                                
+                                const points = (['gravity-well', 'super-gravity-well'].includes(enemy.type) ? 500 : 100);
+                                addScore(points);
+                                
+                                if (enemy.type !== 'hex-yoyo' && enemy.type !== 'super-gravity-well') {
+                                    orbs.push(new Orb(enemy.x, enemy.y));
+                                }
 
-                        if (['sapphire', 'ruby', 'emerald'].includes(enemy.type)) {
-                            for (let i = 0; i < 50; i++) { // Shower of orbs
-                                orbs.push(new Orb(enemy.x + (Math.random() - 0.5) * 50, enemy.y + (Math.random() - 0.5) * 50));
+                                if (enemy.type === 'spinner') {
+                                    for(let i=0; i<3; i++) {
+                                        enemies.push(new Enemy(enemy.x, enemy.y, 'spinner-mini'));
+                                    }
+                                } else if (enemy.type === 'mini-titan') {
+                                    for(let i=0; i<4; i++) {
+                                        enemies.push(new Enemy(enemy.x, enemy.y, 'grunt'));
+                                    }
+                                } else if (enemy.type === 'snake-head') {
+                                    enemy.segments.forEach(seg => {
+                                        seg.leader = null;
+                                        seg.scattered = true;
+                                        seg.hp = 1;
+                                        seg.speed = 6.0;
+                                        const explodeAngle = Math.random() * Math.PI * 2;
+                                        seg.velocity.x = Math.cos(explodeAngle);
+                                        seg.velocity.y = Math.sin(explodeAngle);
+                                    });
+                                } else if (enemy.type === 'gravity-well') {
+                                    enemies.push(new Enemy(enemy.x, enemy.y, 'super-gravity-well'));
+                                } else if (enemy.type === 'super-gravity-well') {
+                                    if (grid) grid.applyForce(enemy.x, enemy.y, 1500, 50); // Massive outward explosion wave
+                                    createExplosion(enemy.x, enemy.y, '#ffffff');
+                                } else if (enemy.type === 'hex-yoyo') {
+                                    if (enemy.owner && !enemy.owner.markedForDeletion) {
+                                        enemy.owner.yoyoOut = false;
+                                        enemy.owner.nextYoyoMode = 'around-the-world';
+                                        enemy.owner.missileCooldown = 0.5; // Fast respawn
+                                        enemy.owner.angry = true;
+                                    }
+                                }
                             }
-                            addScore(5000);
+                        } else if (!player.invulnerable) {
+                            // Player Hit
+                            createExplosion(player.x, player.y, player.color);
+                            if (!infiniteLives) {
+                               lives--;
+                                livesEl.innerHTML = lives;
+                                scoreStreak = 0;
+                                updateBoostUI();
+                            }
                             
-                            const encounters = bossEncounterCounts[enemy.type] || 1;
-                            const hexCount = 2 + (encounters * 2);
-                            for (let i = 0; i < hexCount; i++) {
-                                let hex = new Enemy(enemy.x + (Math.random() - 0.5) * 100, enemy.y + (Math.random() - 0.5) * 100, 'hex-dodger');
-                                hex.angry = true;
-                                enemies.push(hex);
+                            // Kill enemy that hit player
+                            if (enemy.type !== 'super-gravity-well') {
+                                enemy.markedForDeletion = true;
+                                if (enemy.type === 'snake-head') {
+                                    enemy.segments.forEach(seg => {
+                                        seg.leader = null;
+                                        seg.scattered = true;
+                                        seg.hp = 1;
+                                        seg.speed = 6.0;
+                                        const explodeAngle = Math.random() * Math.PI * 2;
+                                        seg.velocity.x = Math.cos(explodeAngle);
+                                        seg.velocity.y = Math.sin(explodeAngle);
+                                    });
+                                }
                             }
-                        }
+                            if (enemy.type !== 'hex-yoyo' && enemy.type !== 'super-gravity-well') {
+                                orbs.push(new Orb(enemy.x, enemy.y));
+                            } else if (enemy.type === 'hex-yoyo') {
+                                if (enemy.owner) {
+                                    enemy.owner.yoyoOut = false;
+                                    enemy.owner.nextYoyoMode = 'around-the-world';
+                                    enemy.owner.angry = true;
+                                }
+                            }
 
-                        triggerDeathBomb();
+                            if (['sapphire', 'ruby', 'emerald'].includes(enemy.type)) {
+                                for (let i = 0; i < 50; i++) { // Shower of orbs
+                                    orbs.push(new Orb(enemy.x + (Math.random() - 0.5) * 50, enemy.y + (Math.random() - 0.5) * 50));
+                                }
+                                addScore(5000);
+                                
+                                const encounters = bossEncounterCounts[enemy.type] || 1;
+                                const hexCount = 2 + (encounters * 2);
+                                for (let i = 0; i < hexCount; i++) {
+                                    let hex = new Enemy(enemy.x + (Math.random() - 0.5) * 100, enemy.y + (Math.random() - 0.5) * 100, 'hex-dodger');
+                                    hex.angry = true;
+                                    enemies.push(hex);
+                                }
+                            }
 
-                        if (lives <= 0 && !infiniteLives) {
-                            player.alive = false;
-                            setTimeout(gameOver, 1000); // Wait a second to see explosion
-                        } else {
-                            player.alive = false;
-                            player.beginRespawnBlinking(1000);
+                            triggerDeathBomb();
+
+                            if (lives <= 0 && !infiniteLives) {
+                                player.alive = false;
+                                setTimeout(gameOver, 1000); // Wait a second to see explosion
+                            } else {
+                                player.alive = false;
+                                player.beginRespawnBlinking(1000);
+                            }
                         }
                     }
                 }

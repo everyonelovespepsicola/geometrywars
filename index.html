@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Neon Geometry Shooter</title>
+    <title>Geometry Wars</title>
     <style>
         body {
             margin: 0;
@@ -15,6 +15,11 @@
 
         canvas {
             display: block;
+            transition: filter 0.3s ease;
+        }
+
+        .blurred-bg {
+            filter: blur(8px) brightness(0.8);
         }
 
         #ui-layer {
@@ -32,7 +37,8 @@
             font-weight: bold;
         }
 
-        #start-screen {
+        #start-screen,
+        #game-over-screen {
             position: absolute;
             top: 50%;
             left: 50%;
@@ -45,6 +51,7 @@
             display: flex;
             flex-direction: column;
             gap: 15px;
+            z-index: 100;
         }
 
         button {
@@ -143,7 +150,7 @@
 <body>
 
     <!-- UI Overlay -->
-    <div id="ui-layer">
+    <div id="ui-layer" class="hidden">
         <div class="hud-text">SCORE: <span id="scoreEl">0</span></div>
         <div class="hud-text" style="color: #ffff00;">HIGH: <span id="highScoreEl">0</span></div>
         <div class="hud-text" style="color: #ff0055;">LIVES: <span id="livesEl">3</span></div>
@@ -163,9 +170,15 @@
     </audio>
 
     <div id="start-screen">
-        <h1 style="margin:0; text-shadow: 0 0 10px cyan;">NEON WARS</h1>
+        <h1 style="margin:0;">GEOMETRY WARS</h1>
         <p id="final-score-msg" style="font-size: 14px; color: #aaa;">Defend the grid.</p>
         <button id="start-btn">Start Game</button>
+    </div>
+
+    <div id="game-over-screen" class="hidden">
+        <h1 style="margin:0; color: #ff0055;">GAME OVER</h1>
+        <p id="game-over-score" style="font-size: 18px; color: #aaa;">Score: 0</p>
+        <button id="retry-btn">Retry</button>
     </div>
 
     <div id="pause-menu" class="hidden">
@@ -173,6 +186,10 @@
         <button id="resume-btn">Resume</button>
         <hr style="border-color: cyan; width: 100%; opacity: 0.5;">
         <h4 style="margin: 0; color: #ffff00;">Debug Tools</h4>
+        <div>
+            <input type="checkbox" id="invincible-check">
+            <label for="invincible-check">Invincible</label>
+        </div>
         <div>
             <input type="checkbox" id="infinite-lives-check">
             <label for="infinite-lives-check">Infinite Lives</label>
@@ -184,7 +201,7 @@
         <button id="skip-level-btn">Skip Level</button>
     </div>
 
-    <canvas id="gameCanvas"></canvas>
+    <canvas id="gameCanvas" class="blurred-bg"></canvas>
 
     <script>
         const canvas = document.getElementById('gameCanvas');
@@ -199,6 +216,10 @@
         for (let i = 0; i < noiseBuffer.length; i++) {
             noiseData[i] = Math.random() * 2 - 1;
         }
+        
+        let lastExplodeTime = 0;
+        let lastCollectTime = 0;
+        let lastSgwTime = 0;
 
         const sounds = {
             shoot: () => {
@@ -219,6 +240,10 @@
                 osc.stop(audioCtx.currentTime + 0.1);
             },
             explode: () => {
+                const now = performance.now();
+                if (now - lastExplodeTime < 50) return; // Audio Throttle
+                lastExplodeTime = now;
+                
                 if (audioCtx.state === 'suspended') audioCtx.resume();
                 const src = audioCtx.createBufferSource();
                 src.buffer = noiseBuffer;
@@ -241,6 +266,8 @@
             },
             bomb: () => {
                 if (audioCtx.state === 'suspended') audioCtx.resume();
+                
+                // Massive Noise Explosion
                 const src = audioCtx.createBufferSource();
                 src.buffer = noiseBuffer;
                 const gain = audioCtx.createGain();
@@ -251,16 +278,67 @@
                 gain.connect(audioCtx.destination);
 
                 filter.type = 'lowpass';
-                filter.frequency.setValueAtTime(400, audioCtx.currentTime);
-                filter.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.8);
+                filter.frequency.setValueAtTime(2000, audioCtx.currentTime);
+                filter.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 2.0);
 
-                gain.gain.setValueAtTime(0.8, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.8);
+                gain.gain.setValueAtTime(1.2, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 2.0);
 
                 src.start();
-                src.stop(audioCtx.currentTime + 0.8);
+                src.stop(audioCtx.currentTime + 2.0);
+
+                // Sub-bass boom
+                const osc = audioCtx.createOscillator();
+                const oscGain = audioCtx.createGain();
+                osc.connect(oscGain);
+                oscGain.connect(audioCtx.destination);
+
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(20, audioCtx.currentTime + 2.0);
+
+                oscGain.gain.setValueAtTime(0.8, audioCtx.currentTime);
+                oscGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 2.0);
+
+                osc.start();
+                osc.stop(audioCtx.currentTime + 2.0);
+            },
+            superGravityWell: () => {
+                const nowMs = performance.now();
+                if (nowMs - lastSgwTime < 500) return; // Throttle to prevent overlap clipping
+                lastSgwTime = nowMs;
+                
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                
+                // Deep ominous drone (Simple version)
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                const filter = audioCtx.createBiquadFilter();
+                
+                osc.connect(filter);
+                filter.connect(gain);
+                gain.connect(audioCtx.destination);
+                
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(100, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(20, audioCtx.currentTime + 4.0);
+                
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(400, audioCtx.currentTime);
+                filter.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 4.0);
+
+                gain.gain.setValueAtTime(0, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.2); // Fade in
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 4.0); // Long fade out
+
+                osc.start();
+                osc.stop(audioCtx.currentTime + 4.0);
             },
             collect: () => {
+                const now = performance.now();
+                if (now - lastCollectTime < 25) return; // Audio Throttle
+                lastCollectTime = now;
+
                 if (audioCtx.state === 'suspended') audioCtx.resume();
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
@@ -293,6 +371,7 @@
         };
 
         // UI Elements
+        const uiLayer = document.getElementById('ui-layer');
         const scoreEl = document.getElementById('scoreEl');
         const highScoreEl = document.getElementById('highScoreEl');
         const livesEl = document.getElementById('livesEl');
@@ -303,12 +382,16 @@
         const finalScoreMsg = document.getElementById('final-score-msg');
         const pauseMenu = document.getElementById('pause-menu');
         const resumeBtn = document.getElementById('resume-btn');
+        const invincibleCheck = document.getElementById('invincible-check');
         const infiniteLivesCheck = document.getElementById('infinite-lives-check');
         const showLinesCheck = document.getElementById('show-lines-check');
         const skipLevelBtn = document.getElementById('skip-level-btn');
         const fpsCounterEl = document.getElementById('fps-counter');
         const enemiesAliveCounterEl = document.getElementById('enemies-alive-counter');
         const waveMsg = document.getElementById('wave-msg');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const gameOverScore = document.getElementById('game-over-score');
+        const retryBtn = document.getElementById('retry-btn');
 
         // Game State
         let animationId;
@@ -322,7 +405,11 @@
         let frame = 0;
         let level = 1;
         let levelFrame = 0;
+        let levelTransitioning = false;
         let bossSpawned = false;
+        let currentBossType = null;
+        let bossEncounterCounts = { sapphire: 0, ruby: 0, emerald: 0 };
+        let debugInvincible = false;
         let infiniteLives = false;
         let debugShowLines = false;
         let lastTime = performance.now();
@@ -333,6 +420,7 @@
         let bombEffect = { active: false, radius: 0, alpha: 0, isDeathBomb: false, respawnQueue: [], x: 0, y: 0 };
         let hexSpawnTimers = [8, 16, 24]; // Times in seconds to guarantee a hex spawn
         let hexSpawnsTriggered = 0;
+        let enemiesRemainingToSpawn = 0;
         let orbs = [];
         let projectilePool;
         let particlePool;
@@ -422,6 +510,10 @@
 
         resumeBtn.addEventListener('click', togglePause);
 
+        invincibleCheck.addEventListener('change', (e) => {
+            debugInvincible = e.target.checked;
+        });
+
         infiniteLivesCheck.addEventListener('change', (e) => {
             infiniteLives = e.target.checked;
         });
@@ -432,7 +524,8 @@
 
         skipLevelBtn.addEventListener('click', () => {
             if (gameActive) {
-                advanceLevel();
+                transitionToNextLevel();
+                togglePause(); // Unpause the game so the transition plays out
             }
         });
 
@@ -832,7 +925,7 @@
             constructor(x, y, type = 'grunt') {
                 this.x = x;
                 this.y = y;
-                this.radius = 15;
+                this.radius = 22.5;
                 this.type = type;
                 this.velocity = { x: 0, y: 0 };
                 this.angle = 0;
@@ -865,7 +958,7 @@
                     case 'gravity-well':
                         this.radius = 25;
                         this.color = '#ff0000'; // Red
-                        this.speed = 0.3;
+                        this.speed = 1.2;
                         this.hp = 10;
                         const gwAngle = Math.random() * Math.PI * 2;
                         this.velocity = { x: Math.cos(gwAngle), y: Math.sin(gwAngle) };
@@ -873,12 +966,13 @@
                     case 'super-gravity-well':
                         this.radius = 50;
                         this.color = '#ffffff';
-                        this.speed = 0;
-                        this.hp = Infinity; // Invulnerable, only dies to lifespan or a bomb
-                        this.lifespan = 4.0;
+                        this.speed = 0.8;
+                        this.hp = 20; // Destroyable by shooting
+                        const sgwAngle = Math.random() * Math.PI * 2;
+                        this.velocity = { x: Math.cos(sgwAngle), y: Math.sin(sgwAngle) };
                         break;
                     case 'proton':
-                        this.radius = 6;
+                        this.radius = 12;
                         this.color = '#ffaa00'; // Orange
                         this.speed = 6;
                         break;
@@ -888,12 +982,14 @@
                         this.speed = 4.2 + Math.random() * 1.2; // Fast and variable
                         break;
                     case 'snake-head':
+                        this.radius = 15; // 33% smaller
                         this.color = '#dfff00'; // Chartreuse
                         this.speed = 4.2;
                         this.segments = [];
                         this.hp = 10; // Increased HP to match Gravity Well
                         break;
                     case 'snake-body':
+                        this.radius = 12; // 33% smaller
                         this.color = '#9acd32'; // YellowGreen
                         this.speed = 4.2;
                         this.hp = Infinity; // Invulnerable to direct shots
@@ -903,7 +999,7 @@
                         this.speed = 8.4;
                         break;
                     case 'hex-dodger':
-                        this.radius = 22.5; // 50% larger than standard 15
+                        this.radius = 22.5;
                         this.color = '#008080'; // Teal
                         this.speed = 3.6;
                         this.hp = 10;
@@ -917,7 +1013,7 @@
                         this.speed = 2.4;
                         break;
                     case 'dart':
-                        this.radius = 8;
+                        this.radius = 16;
                         this.color = '#00ffff';
                         this.speed = 4.8;
                         break;
@@ -949,7 +1045,7 @@
                         this.miniBossSpawned = false;
                         break;
                     case 'arrow':
-                        this.radius = 6;
+                        this.radius = 12;
                         this.color = '#90ee90';
                         this.speed = 7.2;
                         break;
@@ -1235,7 +1331,7 @@
                             while (angleDiff > Math.PI) angleDiff -= Math.PI*2;
 
                             if (Math.abs(angleDiff) < 1.2) {
-                                const dodgeDir = angleToPlayer + (angleDiff > 0 ? Math.PI/4 : -Math.PI/4);
+                                const dodgeDir = angleToPlayer + (angleDiff > 0 ? (65 * Math.PI / 180) : -(65 * Math.PI / 180));
                                 // Faster dodge speed
                                 const dodgeSpeed = this.angry ? 14.4 : 7.2;
                                 this.velocity.x = Math.cos(dodgeDir) * dodgeSpeed;
@@ -1264,32 +1360,73 @@
 
                 // Super Gravity Well Logic
                 if (this.type === 'super-gravity-well') {
-                    this.lifespan -= dt;
-                    if (this.lifespan <= 0) {
-                        this.markedForDeletion = true;
-                        createExplosion(this.x, this.y, '#ffffff');
-                        if (grid) grid.applyForce(this.x, this.y, 1500, 50); // Massive outward explosion wave
-                        return;
+
+                    // Keep it within the play area by bouncing off the edges
+                    if ((this.x - this.radius < 0 && this.velocity.x < 0) || (this.x + this.radius > world.width && this.velocity.x > 0)) {
+                        this.velocity.x *= -1;
+                    }
+                    if ((this.y - this.radius < 0 && this.velocity.y < 0) || (this.y + this.radius > world.height && this.velocity.y > 0)) {
+                        this.velocity.y *= -1;
                     }
 
                     // Pull Grid (Massive)
                     if (grid) {
-                        grid.applyForce(this.x, this.y, 2500, -4.0);
+                        grid.applyForce(this.x, this.y, 1000, -4.0);
                     }
 
-                    // Pull Player (Global)
+                    // Limit the radius strictly to a smaller localized area (800 pixels)
+                    const maxSuckRadius = 800;
+
+                    // Pull Player (Radius Limited)
                     const distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
-                    if (distToPlayer > this.radius) {
-                        player.velocity.x += (this.x - player.x) / distToPlayer * 0.3;
-                        player.velocity.y += (this.y - player.y) / distToPlayer * 0.3;
+                    if (distToPlayer > this.radius && distToPlayer < maxSuckRadius) {
+                        // Scale down pull if there are multiple active super gravity wells so player can escape
+                        let sgwCount = 0;
+                        for (let i = 0; i < enemies.length; i++) {
+                            if (enemies[i].type === 'super-gravity-well') sgwCount++;
+                        }
+                        const pullForce = 0.26 / Math.max(1, sgwCount * 0.75);
+                        
+                        player.velocity.x += (this.x - player.x) / distToPlayer * pullForce;
+                        player.velocity.y += (this.y - player.y) / distToPlayer * pullForce;
                     }
-                    // Pull Enemies (Global)
+                    // Pull Enemies (Radius Limited)
                     enemies.forEach(other => {
-                        if (other !== this && other.type !== 'super-gravity-well') {
+                        if (other !== this) {
                             const dist = Math.hypot(other.x - this.x, other.y - this.y);
-                            if (dist > this.radius) {
-                                other.velocity.x += (this.x - other.x) / dist * 0.6;
-                                other.velocity.y += (this.y - other.y) / dist * 0.6;
+                            
+                            if (other.type === 'gravity-well' || other.type === 'super-gravity-well') {
+                                if (dist === 0) {
+                                    other.x += 1; // Nudge to prevent NaN errors if perfectly overlapped
+                                } else if (dist < maxSuckRadius) {
+                                    const angle = Math.atan2(other.y - this.y, other.x - this.x);
+                                    
+                                    // Pull towards each other
+                                    other.x += (this.x - other.x) / dist * 3.0 * 60 * dt;
+                                    other.y += (this.y - other.y) / dist * 3.0 * 60 * dt;
+                                    
+                                    // Whirlpool swirl
+                                    const tangAngle = angle + Math.PI / 2;
+                                    other.x += Math.cos(tangAngle) * 6.0 * 60 * dt;
+                                    other.y += Math.sin(tangAngle) * 6.0 * 60 * dt;
+
+                                    // Rub against each other (Collision)
+                                    const minDist = this.radius + other.radius;
+                                    if (dist < minDist) {
+                                        const overlap = minDist - dist;
+                                        other.x += Math.cos(angle) * overlap * 0.5;
+                                        other.y += Math.sin(angle) * overlap * 0.5;
+                                    }
+                                } else {
+                                    // Global slow pull towards each other across the map
+                                    other.x += (this.x - other.x) / dist * 1.0 * 60 * dt;
+                                    other.y += (this.y - other.y) / dist * 1.0 * 60 * dt;
+                                }
+                            } else {
+                                if (dist > this.radius && dist < maxSuckRadius) {
+                                    other.x += (this.x - other.x) / dist * 12.0 * 60 * dt;
+                                    other.y += (this.y - other.y) / dist * 12.0 * 60 * dt;
+                                }
                             }
                         }
                     });
@@ -1313,17 +1450,47 @@
                     // Pull Player
                     const distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
                     if (distToPlayer > this.radius) {
-                        player.velocity.x += (this.x - player.x) / distToPlayer * 0.12; // DOUBLED
-                        player.velocity.y += (this.y - player.y) / distToPlayer * 0.12; // DOUBLED
+                        player.velocity.x += (this.x - player.x) / distToPlayer * 0.084; // 30% weaker
+                        player.velocity.y += (this.y - player.y) / distToPlayer * 0.084; // 30% weaker
                     }
                     // Pull Enemies
                     enemies.forEach(other => {
-                        if (other !== this && other.type !== 'gravity-well') {
-                            if (Math.abs(other.x - this.x) > 300 || Math.abs(other.y - this.y) > 300) return;
+                        if (other !== this) {
+                            const isOtherWell = other.type === 'gravity-well' || other.type === 'super-gravity-well';
+                            if (!isOtherWell && (Math.abs(other.x - this.x) > 300 || Math.abs(other.y - this.y) > 300)) return;
                             const dist = Math.hypot(other.x - this.x, other.y - this.y);
-                            if (dist < 300) {
-                                other.velocity.x += (this.x - other.x) / dist * 0.24; // DOUBLED
-                                other.velocity.y += (this.y - other.y) / dist * 0.24; // DOUBLED
+                            
+                            if (isOtherWell) {
+                                if (dist === 0) {
+                                    other.x += 1; // Nudge to prevent NaN errors
+                                } else if (dist < 300) {
+                                    const angle = Math.atan2(other.y - this.y, other.x - this.x);
+                                    
+                                    // Pull towards each other
+                                    other.x += (this.x - other.x) / dist * 1.5 * 60 * dt;
+                                    other.y += (this.y - other.y) / dist * 1.5 * 60 * dt;
+                                    
+                                    // Whirlpool swirl
+                                    const tangAngle = angle + Math.PI / 2;
+                                    other.x += Math.cos(tangAngle) * 3.0 * 60 * dt;
+                                    other.y += Math.sin(tangAngle) * 3.0 * 60 * dt;
+
+                                    // Rub against each other (Collision)
+                                    const minDist = this.radius + other.radius;
+                                    if (dist < minDist) {
+                                        const overlap = minDist - dist;
+                                        other.x += Math.cos(angle) * overlap * 0.5;
+                                        other.y += Math.sin(angle) * overlap * 0.5;
+                                    }
+                                } else {
+                                    // Global slow pull towards each other across the map
+                                    other.x += (this.x - other.x) / dist * 0.5 * 60 * dt;
+                                    other.y += (this.y - other.y) / dist * 0.5 * 60 * dt;
+                                }
+                            } else if (dist < 300) {
+                                // Normal suck logic
+                                other.x += (this.x - other.x) / dist * 1.5 * 60 * dt;
+                                other.y += (this.y - other.y) / dist * 1.5 * 60 * dt;
                             }
                         }
                     });
@@ -1331,7 +1498,15 @@
 
                 // Snake Body Logic
                 if (this.type === 'snake-body') {
-                    if (this.leader && !this.leader.markedForDeletion) {
+                    if (this.scattered) {
+                        // Bounce off walls
+                        if ((this.x - this.radius < 0 && this.velocity.x < 0) || (this.x + this.radius > world.width && this.velocity.x > 0)) {
+                            this.velocity.x *= -1;
+                        }
+                        if ((this.y - this.radius < 0 && this.velocity.y < 0) || (this.y + this.radius > world.height && this.velocity.y > 0)) {
+                            this.velocity.y *= -1;
+                        }
+                    } else if (this.leader && !this.leader.markedForDeletion) {
                         const angleToLeader = Math.atan2(this.leader.y - this.y, this.leader.x - this.x);
                         const dist = Math.hypot(this.leader.x - this.x, this.leader.y - this.y);
                         if (dist > this.radius) { // Maintain distance
@@ -1678,20 +1853,48 @@
             }
         }
 
-        function advanceLevel() {
+        function startNextLevel() {
             enemies.forEach(e => e.markedForDeletion = true); // Clear all enemies
+            projectiles.forEach(p => p.markedForDeletion = true);
+            particles.forEach(p => p.markedForDeletion = true);
+            orbs.forEach(o => o.markedForDeletion = true);
+            
             level++;
             levelFrame = 0;
             hexSpawnsTriggered = 0;
             bossSpawned = false;
             levelEl.innerText = level;
             waveMsg.classList.add('hidden');
+            
+            // Stop active bomb blast from carrying over to the next level
+            bombEffect.active = false;
+            bombEffect.respawnQueue = [];
+
+            levelTransitioning = false;
+
             const isBossLevel = level % 3 === 0;
             showLevelTitle(isBossLevel ? "BOSS FIGHT" : `LEVEL ${level}`, isBossLevel ? "red" : "white");
+            enemiesRemainingToSpawn = Math.floor(150 * Math.pow(1.1, level - 1));
+        }
+
+        function transitionToNextLevel() {
+            if (levelTransitioning) return;
+            levelTransitioning = true;
+            
+            const isBossNext = (level + 1) % 3 === 0;
+            showLevelTitle(isBossNext ? "WARNING: BOSS APPROACHING" : "LEVEL COMPLETE", isBossNext ? "#ff0055" : "#00ffaa");
+            
+            setTimeout(() => {
+                startNextLevel();
+            }, 1500); // 1.5 second seamless transition
         }
 
         function showLevelTitle(text, color) {
+            // Remove any existing titles to prevent overlap
+            document.querySelectorAll('.level-title-popup').forEach(t => t.remove());
+
             const title = document.createElement('div');
+            title.className = 'level-title-popup';
             title.innerText = text;
             title.style.position = 'absolute';
             title.style.top = '30%';
@@ -1703,7 +1906,24 @@
             title.style.fontWeight = 'bold';
             title.style.transition = 'opacity 1s';
             document.body.appendChild(title);
-            setTimeout(() => { title.style.opacity = '0'; setTimeout(() => title.remove(), 1000); }, 2000);
+            setTimeout(() => { title.style.opacity = '0'; setTimeout(() => title.remove(), 1000); }, 1000);
+        }
+
+        function getSafeEdgeSpawnPoint(radius) {
+            let x, y;
+            let attempts = 0;
+            const safeDist = 800; // Minimum safe distance from player
+            do {
+                if (Math.random() < 0.5) {
+                    x = Math.random() < 0.5 ? 0 - radius : world.width + radius;
+                    y = Math.random() * world.height;
+                } else {
+                    x = Math.random() * world.width;
+                    y = Math.random() < 0.5 ? 0 - radius : world.height + radius;
+                }
+                attempts++;
+            } while (Math.hypot(player.x - x, player.y - y) < safeDist && attempts < 20);
+            return { x, y };
         }
 
         function spawnEnemies(dt) {
@@ -1715,26 +1935,53 @@
                     if (level === 9) type = 'emerald';
                     if (level > 9) type = ['sapphire', 'ruby', 'emerald'][Math.floor(Math.random() * 3)];
                     
+                    currentBossType = type;
+                    bossEncounterCounts[type]++;
+
                     const boss = new Enemy(canvas.width/2, -100, type);
                     boss.y = 100; // Move into view
+                    
+                    // Scale boss stats based on the number of times it has been encountered
+                    const encounters = bossEncounterCounts[type];
+                    boss.maxHp += (encounters - 1) * 50; // Add 50 HP per encounter
+                    boss.hp = boss.maxHp;
+                    boss.speed += (encounters - 1) * 0.3; // Make them noticeably faster
+
                     enemies.push(boss);
                     bossSpawned = true;
                 }
+
+                // Handle Boss Minion Cap & Spawning
+                const encounters = bossEncounterCounts[currentBossType] || 1;
+                const bossEnemyCap = 5 + (encounters * 5); // Enemy cap ramps up each encounter
+                
+                const bossAlive = enemies.some(e => ['sapphire', 'ruby', 'emerald'].includes(e.type));
+                if (bossAlive && enemies.length < bossEnemyCap) {
+                    spawnTimer += dt;
+                    if (spawnTimer > 1.0) { // Spawn 1 minion every second during the fight
+                        spawnTimer = 0;
+                        const radius = 30;
+                        const pos = getSafeEdgeSpawnPoint(radius);
+                        const types = ['grunt', 'weaver', 'spinner'];
+                        enemies.push(new Enemy(pos.x, pos.y, types[Math.floor(Math.random() * types.length)]));
+                    }
+                }
+
                 return; // Boss handles spawning
             }
             
+            let currentHexCount = enemies.filter(e => e.type === 'hex-dodger').length;
+            const maxHexCount = 1 + level;
+
             // --- Guaranteed Hex-Dodger Spawns ---
             if (hexSpawnsTriggered < hexSpawnTimers.length && levelFrame >= hexSpawnTimers[hexSpawnsTriggered]) {
-                const radius = 30;
-                let x, y;
-                if (Math.random() < 0.5) {
-                    x = Math.random() < 0.5 ? 0 - radius : world.width + radius;
-                    y = Math.random() * world.height;
-                } else {
-                    x = Math.random() * world.width;
-                    y = Math.random() < 0.5 ? 0 - radius : world.height + radius;
+                if (currentHexCount < maxHexCount) {
+                    const radius = 30;
+                    const pos = getSafeEdgeSpawnPoint(radius);
+                    enemies.push(new Enemy(pos.x, pos.y, 'hex-dodger'));
+                    enemiesRemainingToSpawn--;
+                    currentHexCount++;
                 }
-                enemies.push(new Enemy(x, y, 'hex-dodger'));
                 hexSpawnsTriggered++;
             }
 
@@ -1742,16 +1989,15 @@
             cornerSpawnTimer += dt;
 
             // Only attempt to spawn on a timer to avoid spawning every frame
-            if (spawnTimer < 1.0) return; // Try to spawn every 1 second
+            if (spawnTimer < 0.5) return; // Try to spawn every 0.5 seconds
             spawnTimer = 0; // Reset timer
 
-            // Level Duration Check
-            const levelDuration = 30; // 30 seconds per level
-            if (levelFrame > levelDuration) return;
+            // Quota Check
+            if (enemiesRemainingToSpawn <= 0) return;
 
-            // Enemy Cap Logic: Scales from ~15 (Level 1) to ~100 (Level 10+)
+            // Enemy Cap Logic: Scales from ~40 (Level 1) to ~130 (Level 10+)
             // This prevents overcrowding while allowing death spawns (Splitters) to exceed the limit.
-            const enemyCap = 15 + (level * 8);
+            const enemyCap = 30 + (level * 10);
             if (enemies.length >= enemyCap) return;
 
             const radius = 30;
@@ -1767,6 +2013,8 @@
                 ];
 
                 corners.forEach(corner => {
+                    if (Math.hypot(player.x - corner.x, player.y - corner.y) < 800) return; // Skip spawning in this corner if too close
+
                     // Spawn a group of enemies at each corner. Group size increases with score.
                     const groupSize = 2 + Math.floor(score / 10000);
                     for (let i = 0; i < groupSize; i++) {
@@ -1775,22 +2023,16 @@
                         // For corner waves, use simpler enemies
                         const enemyType = Math.random() < 0.4 ? 'weaver' : 'grunt';
                         enemies.push(new Enemy(spawnX, spawnY, enemyType));
+                        enemiesRemainingToSpawn--;
                     }
                 });
                 return; // Skip the regular edge spawn on this frame
             }
 
             // --- Regular Edge Spawn ---
-            let x, y;
-            
-            // Spawn randomly on edges
-            if (Math.random() < 0.5) {
-                x = Math.random() < 0.5 ? 0 - radius : world.width + radius;
-                y = Math.random() * world.height;
-            } else {
-                x = Math.random() * world.width;
-                y = Math.random() < 0.5 ? 0 - radius : world.height + radius;
-            }
+            const pos = getSafeEdgeSpawnPoint(radius);
+            let x = pos.x;
+            let y = pos.y;
 
             // Decide which enemy type to spawn
             const rand = Math.random();
@@ -1808,6 +2050,7 @@
                     lastSegment = segment;
                 }
                 enemies.push(head);
+                enemiesRemainingToSpawn -= 9;
                 return; // Exit after spawning snake
             } else if (rand < 0.12) { // Mayfly Swarm
                 for (let i = 0; i < 12; i++) {
@@ -1815,15 +2058,17 @@
                     const my = y + (Math.random() - 0.5) * 60;
                     enemies.push(new Enemy(mx, my, 'mayfly'));
                 }
+                enemiesRemainingToSpawn -= 12;
                 return;
             } else if (rand < 0.20) enemyType = 'repulsor';
             else if (rand < 0.28) enemyType = 'gravity-well';
-            else if (rand < 0.50) enemyType = 'hex-dodger'; // Increased spawn chance
+            else if (rand < 0.50) enemyType = (currentHexCount < maxHexCount) ? 'hex-dodger' : 'spinner'; // Increased spawn chance
             else if (rand < 0.60) enemyType = 'spinner';
             else if (rand < 0.75) enemyType = 'weaver';
             else enemyType = 'grunt';
 
             enemies.push(new Enemy(x, y, enemyType));
+            enemiesRemainingToSpawn--;
         }
 
         function useBomb() {
@@ -1873,12 +2118,14 @@
                 // Pause the game
                 cancelAnimationFrame(animationId);
                 pauseMenu.classList.remove('hidden');
+                canvas.classList.add('blurred-bg');
                 // Stop music scheduler
                const player = document.getElementById('bg-music');
                 if (player) player.pause();
             } else {
                 // Resume the game
                 pauseMenu.classList.add('hidden');
+                canvas.classList.remove('blurred-bg');
                 lastTime = performance.now(); // Prevents large dt jump
                 if (musicPlaying) {
                     sounds.startMusic(); // Restart music scheduler
@@ -1901,10 +2148,13 @@
             levelFrame = 0;
             hexSpawnsTriggered = 0;
             bossSpawned = false;
+            currentBossType = null;
+            bossEncounterCounts = { sapphire: 0, ruby: 0, emerald: 0 };
             spawnTimer = 0;
             cornerSpawnTimer = 0;
             waveMsg.classList.add('hidden');
             showLinesCheck.checked = false; debugShowLines = false;
+            invincibleCheck.checked = false; debugInvincible = false;
             infiniteLivesCheck.checked = false; infiniteLives = false;
             levelEl.innerText = level;
             projectiles = [];
@@ -1915,9 +2165,14 @@
             particlePool = new Pool(Particle, 1000);
             grid = new Grid(world.width, world.height, 50);
             player = new Player(world.width / 2, world.height / 2);
+            enemiesRemainingToSpawn = 150;
             bombEffect = { active: false, radius: 0, alpha: 0, isDeathBomb: false, respawnQueue: [], x: 0, y: 0 };
             gameActive = true;
+            levelTransitioning = false;
+            uiLayer.classList.remove('hidden');
             startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            canvas.classList.remove('blurred-bg');
             const musicPlayer = document.getElementById('bg-music');
             if (musicPlayer) musicPlayer.currentTime = 0; // Restart music from beginning
 
@@ -1928,10 +2183,11 @@
 
         function gameOver() {
             gameActive = false;
+            uiLayer.classList.add('hidden');
             cancelAnimationFrame(animationId);
-            startScreen.classList.remove('hidden');
-            finalScoreMsg.innerText = `Final Score: ${score}`;
-            startBtn.innerText = "Play Again";
+            gameOverScreen.classList.remove('hidden');
+            canvas.classList.add('blurred-bg');
+            gameOverScore.innerText = `Final Score: ${score}`;
             const player = document.getElementById('bg-music');
             if (player) player.pause();
             
@@ -1970,19 +2226,22 @@
 
             // Level Progression Logic
             if (level % 3 !== 0) { // Non-boss levels
-                const levelDuration = 30; // 30 seconds per level
-                if (levelFrame > levelDuration) {
+                if (enemiesRemainingToSpawn <= 0) {
                     if (enemies.length === 0 && !bombEffect.isDeathBomb) {
-                        advanceLevel();
+                        transitionToNextLevel();
                     } else {
                         waveMsg.innerText = `ENEMIES REMAINING: ${enemies.length}`;
                         waveMsg.classList.remove('hidden');
 
                         // Morph the last N enemies into Hex-Dodgers
+                        const currentMorphHexCount = enemies.filter(e => e.type === 'hex-dodger').length;
+                        const maxMorphHexCount = 1 + level;
+                        let morphsAllowed = maxMorphHexCount - currentMorphHexCount;
+
                         const morphCount = level * 2;
                         if (enemies.length <= morphCount) {
                             enemies.forEach(enemy => {
-                                if (enemy.type !== 'hex-dodger' && enemy.type !== 'hex-yoyo' && !enemy.markedForDeletion) {
+                                if (morphsAllowed > 0 && enemy.type !== 'hex-dodger' && enemy.type !== 'hex-yoyo' && enemy.type !== 'gravity-well' && enemy.type !== 'super-gravity-well' && !enemy.markedForDeletion) {
                                     enemy.type = 'hex-dodger';
                                     enemy.radius = 22.5;
                                     enemy.color = '#008080';
@@ -1993,6 +2252,7 @@
                                     enemy.missileCooldown = 0;
                                     enemy.yoyoOut = false;
                                     createExplosion(enemy.x, enemy.y, '#008080'); // Burst of teal particles
+                                    morphsAllowed--;
                                 }
                             });
                         }
@@ -2000,7 +2260,7 @@
                 }
             } else { // Boss Level Failsafe
                 if (bossSpawned && enemies.length === 0 && !bombEffect.isDeathBomb) {
-                    advanceLevel();
+                    transitionToNextLevel();
                 }
             }
 
@@ -2021,8 +2281,10 @@
             enemies.forEach(enemy => enemy.update(dt));
 
             // Hex-Dodger Morph Mechanic
-            let hasHex = enemies.some(e => e.type === 'hex-dodger');
-            if (!hasHex) {
+            const currentPassiveHexCount = enemies.filter(e => e.type === 'hex-dodger').length;
+            const maxPassiveHexCount = 1 + level;
+            
+            if (currentPassiveHexCount < maxPassiveHexCount) {
                 for (let i = 0; i < enemies.length; i++) {
                     const enemy = enemies[i];
                     if (['grunt', 'weaver', 'spinner'].includes(enemy.type) && !enemy.markedForDeletion) {
@@ -2037,7 +2299,6 @@
                             enemy.dodgeCooldown = 0;
                             enemy.missileCooldown = 0;
                             createExplosion(enemy.x, enemy.y, '#008080'); // Burst of teal particles
-                            hasHex = true;
                             break; // Only morph one at a time
                         }
                     }
@@ -2056,14 +2317,9 @@
                         // Dump all captured enemies back onto the edges of the board
                         bombEffect.respawnQueue.forEach(type => {
                             const radius = 30;
-                            let x, y;
-                            if (Math.random() < 0.5) {
-                                x = Math.random() < 0.5 ? 0 - radius : world.width + radius;
-                                y = Math.random() * world.height;
-                            } else {
-                                x = Math.random() * world.width;
-                                y = Math.random() < 0.5 ? 0 - radius : world.height + radius;
-                            }
+                            const pos = getSafeEdgeSpawnPoint(radius);
+                            let x = pos.x;
+                            let y = pos.y;
                             
                             if (type === 'snake-head') {
                                 const head = new Enemy(x, y, 'snake-head');
@@ -2081,6 +2337,7 @@
                                 // Ignore fragments, they are handled by their reconstructed parents
                             } else {
                                 enemies.push(new Enemy(x, y, type));
+                                if (type === 'super-gravity-well') sounds.superGravityWell();
                             }
                         });
                         bombEffect.respawnQueue = [];
@@ -2092,6 +2349,9 @@
                         const distSq = (bombEffect.x - enemy.x)**2 + (bombEffect.y - enemy.y)**2;
                         if (distSq < (bombEffect.radius + enemy.radius)**2) {
                             if (!enemy.markedForDeletion) {
+                                // Bosses are immune to bombs
+                                if (['sapphire', 'ruby', 'emerald'].includes(enemy.type)) return;
+
                                 if (bombEffect.isDeathBomb) {
                                     if (enemy.type !== 'snake-body' && enemy.type !== 'hex-yoyo') {
                                         bombEffect.respawnQueue.push(enemy.type);
@@ -2145,7 +2405,7 @@
                     if (distSq < combinedRadius * combinedRadius) {
                         if (enemy.markedForDeletion) return;
 
-                        if (enemy.type === 'snake-body') return; // invulnerable
+                        if (enemy.type === 'snake-body' && !enemy.scattered) return; // invulnerable
 
                         // Emerald Deflection (Phase 3)
                         if (enemy.type === 'emerald' && enemy.hp < enemy.maxHp * 0.33) {
@@ -2181,7 +2441,7 @@
                             }
 
                             // Increase Score
-                            const points = (enemy.type === 'gravity-well' ? 500 : 100);
+                            const points = (['gravity-well', 'super-gravity-well'].includes(enemy.type) ? 500 : 100);
                             addScore(points);
 
                             // Death Spawns
@@ -2199,17 +2459,32 @@
                                     orbs.push(new Orb(enemy.x + (Math.random() - 0.5) * 50, enemy.y + (Math.random() - 0.5) * 50));
                                 }
                                 addScore(5000);
-                                advanceLevel();
+                                
+                                // Spawn a ramping cluster of aggressive Hex-Dodgers
+                                const encounters = bossEncounterCounts[enemy.type] || 1;
+                                const hexCount = 2 + (encounters * 2); 
+                                for (let i = 0; i < hexCount; i++) {
+                                    let hex = new Enemy(enemy.x + (Math.random() - 0.5) * 100, enemy.y + (Math.random() - 0.5) * 100, 'hex-dodger');
+                                    hex.angry = true;
+                                    enemies.push(hex);
+                                }
                             } else if (enemy.type === 'snake-head') {
                                 addScore(1000);
-                                // When the head dies, its segments break off and become aggressive
+                                // When the head dies, its segments break off and bounce around
                                 enemy.segments.forEach(seg => {
-                                    seg.markedForDeletion = true;
-                                    // Spawn a chaotic 'spinner-mini' in place of the body segment
-                                    enemies.push(new Enemy(seg.x, seg.y, 'spinner-mini'));
+                                    seg.leader = null;
+                                    seg.scattered = true;
+                                    seg.hp = 1;
+                                    seg.speed = 6.0; // Fast bounce
+                                    const explodeAngle = Math.random() * Math.PI * 2;
+                                    seg.velocity.x = Math.cos(explodeAngle);
+                                    seg.velocity.y = Math.sin(explodeAngle);
                                 });
                             } else if (enemy.type === 'gravity-well') {
                                 enemies.push(new Enemy(enemy.x, enemy.y, 'super-gravity-well'));
+                            } else if (enemy.type === 'super-gravity-well') {
+                                if (grid) grid.applyForce(enemy.x, enemy.y, 1500, 50); // Massive outward explosion wave
+                                createExplosion(enemy.x, enemy.y, '#ffffff');
                             }
                         }
                     }
@@ -2218,7 +2493,8 @@
                 // Gravity Well Absorption Logic
                 if (enemy.type === 'gravity-well' || enemy.type === 'super-gravity-well') {
                     enemies.forEach((other, otherIndex) => {
-                        if (other !== enemy && !['gravity-well', 'super-gravity-well', 'proton', 'hex-yoyo'].includes(other.type)) { // Using squared distance is faster
+                        const isAbsorbable = other !== enemy && !['super-gravity-well', 'proton', 'hex-yoyo'].includes(other.type) && !(enemy.type === 'gravity-well' && other.type === 'gravity-well');
+                        if (isAbsorbable) { // Using squared distance is faster
                             const combinedRadius = enemy.radius + other.radius;
                             if (Math.abs(enemy.x - other.x) > combinedRadius + 5 ||
                                 Math.abs(enemy.y - other.y) > combinedRadius + 5) return;
@@ -2229,11 +2505,18 @@
                                 createExplosion(other.x, other.y, enemy.color);
                                 other.markedForDeletion = true;
                                 
+                                enemy.absorbed++;
+
                                 if (enemy.type === 'super-gravity-well') {
                                     addScore(50);
+                                    if (enemy.absorbed >= 10) { // Overload
+                                        enemy.hp = 0;
+                                        enemy.markedForDeletion = true;
+                                        addScore(500);
+                                        createExplosion(enemy.x, enemy.y, enemy.color);
+                                        if (grid) grid.applyForce(enemy.x, enemy.y, 1500, 50);
+                                    }
                                 } else {
-                                    enemy.absorbed++;
-                                    
                                     // Overload
                                     if (enemy.absorbed >= 5) {
                                         enemy.hp = 0; 
@@ -2253,7 +2536,7 @@
                 }
 
                 // Collision: Enemy vs Player
-                if (player.alive && !player.invulnerable) { // Using squared distance is faster
+                if (player.alive && !player.invulnerable && !debugInvincible) { // Using squared distance is faster
                     const combinedRadius = player.radius + enemy.radius;
                     const distSq = (player.x - enemy.x)**2 + (player.y - enemy.y)**2;
                     if (distSq < combinedRadius * combinedRadius) {
@@ -2268,6 +2551,17 @@
                         // Kill enemy that hit player
                         if (enemy.type !== 'super-gravity-well') {
                             enemy.markedForDeletion = true;
+                            if (enemy.type === 'snake-head') {
+                                enemy.segments.forEach(seg => {
+                                    seg.leader = null;
+                                    seg.scattered = true;
+                                    seg.hp = 1;
+                                    seg.speed = 6.0;
+                                    const explodeAngle = Math.random() * Math.PI * 2;
+                                    seg.velocity.x = Math.cos(explodeAngle);
+                                    seg.velocity.y = Math.sin(explodeAngle);
+                                });
+                            }
                         }
                         if (enemy.type !== 'hex-yoyo' && enemy.type !== 'super-gravity-well') {
                             orbs.push(new Orb(enemy.x, enemy.y));
@@ -2284,7 +2578,14 @@
                                 orbs.push(new Orb(enemy.x + (Math.random() - 0.5) * 50, enemy.y + (Math.random() - 0.5) * 50));
                             }
                             addScore(5000);
-                            advanceLevel();
+                            
+                            const encounters = bossEncounterCounts[enemy.type] || 1;
+                            const hexCount = 2 + (encounters * 2);
+                            for (let i = 0; i < hexCount; i++) {
+                                let hex = new Enemy(enemy.x + (Math.random() - 0.5) * 100, enemy.y + (Math.random() - 0.5) * 100, 'hex-dodger');
+                                hex.angry = true;
+                                enemies.push(hex);
+                            }
                         }
 
                         triggerDeathBomb();
@@ -2303,7 +2604,9 @@
            
             // Cleanup marked objects
             for (let i = enemies.length - 1; i >= 0; i--) {
-                if (enemies[i].markedForDeletion) enemies.splice(i, 1);
+                if (enemies[i].markedForDeletion) {
+                    enemies.splice(i, 1);
+                }
             }
             for (let i = projectiles.length - 1; i >= 0; i--) {
                 if (projectiles[i].markedForDeletion) {
@@ -2412,14 +2715,21 @@
             for (const gp of gamepads) {
                 if (gp && gp.buttons.some(b => b.pressed)) {
                     if (audioCtx.state === 'suspended') audioCtx.resume();
-                    resetGame();
-                    return;
+                    if (!startScreen.classList.contains('hidden') || !gameOverScreen.classList.contains('hidden')) {
+                        resetGame();
+                        return;
+                    }
                 }
             }
             requestAnimationFrame(pollGamepadsForStart);
         }
 
         startBtn.addEventListener('click', () => {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            resetGame();
+        });
+
+        retryBtn.addEventListener('click', () => {
             if (audioCtx.state === 'suspended') audioCtx.resume();
             resetGame();
         });

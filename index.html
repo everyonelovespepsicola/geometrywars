@@ -578,8 +578,8 @@
                 this.radius = 15;
                 this.color = '#ffffff'; // White
                 this.velocity = { x: 0, y: 0 };
-            this.speed = 0.231; // Terminal velocity gives a max speed of 7.7 (10% faster than the 'repulsor')
-                this.friction = 0.97;
+                this.speed = 1.155; // Adjusted to maintain max speed of 7.7 with snappier friction
+                this.friction = 0.85; // Lower friction fixes floaty/sluggish controls
                 this.alive = true;
                 this.invulnerable = false;
                 this.aimAngle = 0;

@@ -578,8 +578,8 @@
                 this.radius = 15;
                 this.color = '#ffffff'; // White
                 this.velocity = { x: 0, y: 0 };
-            this.speed = 0.231; // Terminal velocity gives a max speed of 7.7 (10% faster than the 'repulsor')
-                this.friction = 0.97;
+                this.speed = 1.155; // Adjusted to maintain max speed of 7.7 with snappier friction
+                this.friction = 0.85; // Lower friction fixes floaty/sluggish controls
                 this.alive = true;
                 this.invulnerable = false;
                 this.aimAngle = 0;
@@ -638,10 +638,19 @@
                 if (!this.alive) return;
 
                 // Movement Logic
-                if (keys.w) this.velocity.y -= 1;
-                if (keys.s) this.velocity.y += 1;
-                if (keys.a) this.velocity.x -= 1;
-                if (keys.d) this.velocity.x += 1;
+                let moveX = 0;
+                let moveY = 0;
+                if (keys.w) moveY -= 1;
+                if (keys.s) moveY += 1;
+                if (keys.a) moveX -= 1;
+                if (keys.d) moveX += 1;
+
+                // Normalize keyboard input so diagonal movement isn't faster
+                if (moveX !== 0 || moveY !== 0) {
+                    const len = Math.hypot(moveX, moveY);
+                    moveX /= len;
+                    moveY /= len;
+                }
 
                 let rightStickActive = false;
 
@@ -655,8 +664,13 @@
                         const lx = gp.axes[0];
                         const ly = gp.axes[1];
                         if (Math.abs(lx) > deadzone || Math.abs(ly) > deadzone) {
-                            this.velocity.x += lx;
-                            this.velocity.y += ly;
+                            moveX = lx;
+                            moveY = ly;
+                            const len = Math.hypot(moveX, moveY);
+                            if (len > 1) {
+                                moveX /= len;
+                                moveY /= len;
+                            }
                             inputMode = 'gamepad';
                         }
 
@@ -700,6 +714,10 @@
                         }
                     }
                 }
+
+                // Apply input to velocity (frame-rate independent)
+                this.velocity.x += moveX * 60 * dt;
+                this.velocity.y += moveY * 60 * dt;
 
                 // Apply velocity
                 this.x += this.velocity.x * this.speed * 60 * dt;

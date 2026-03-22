@@ -2,7 +2,7 @@
 
 A fast-paced, neon-infused arcade twin-stick shooter built with HTML5 Canvas and vanilla JavaScript. Defend the grid against endless waves of geometric enemies!
 
-**Play the game here:** [https://everyonelovespepsicola.github.io/geometrywars/](https://everyonelovespepsicola.github.io/geometrywars/)
+**Play the game here:** <a href="https://everyonelovespepsicola.github.io/geometrywars/"><button>Try Me</button></a>
 
 ## Features
 

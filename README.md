@@ -4,6 +4,10 @@ A fast-paced, neon-infused arcade twin-stick shooter built with HTML5 Canvas and
 
 [![Try Me](https://img.shields.io/badge/-Try%20Me-0052cc?style=for-the-badge)](https://everyonelovespepsicola.github.io/geometrywars/)
 
+**Scan to Play on Mobile:**
+
+![QR Code](https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://everyonelovespepsicola.github.io/geometrywars/)
+
 ## Features
 
 - **Classic Twin-Stick Action:** Smooth and responsive movement and aiming mechanics.

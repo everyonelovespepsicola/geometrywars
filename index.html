@@ -56,7 +56,7 @@
 
         button {
             background: transparent;
-            color: cyan;
+            color: white;
             border: none;
             padding: 10px 20px;
             font-family: inherit;
@@ -67,7 +67,7 @@
         }
 
         button:hover {
-            background: cyan;
+            background: white;
             color: black;
         }
 
@@ -102,8 +102,8 @@
 
         #pause-menu h3 {
             margin: 0 0 10px 0;
-            color: cyan;
-            text-shadow: 0 0 10px cyan;
+            color: white;
+            text-shadow: 0 0 10px white;
             font-size: 28px;
             text-transform: uppercase;
         }
@@ -159,7 +159,7 @@
             width: 140px;
             height: 140px;
             background: rgba(255, 255, 255, 0.05);
-            border: 2px solid rgba(0, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.2);
             border-radius: 50%;
             pointer-events: auto; /* Catch touch inputs */
             touch-action: none; /* Prevent browser scrolling */
@@ -170,18 +170,18 @@
             position: absolute;
             top: 50%; left: 50%;
             width: 60px; height: 60px;
-            background: rgba(0, 255, 255, 0.4);
+            background: rgba(255, 255, 255, 0.4);
             border-radius: 50%;
             transform: translate(-50%, -50%);
             pointer-events: none;
-            box-shadow: 0 0 15px cyan;
+            box-shadow: 0 0 15px white;
         }
         .mobile-btn {
             position: absolute;
             pointer-events: auto;
             background: rgba(0, 0, 0, 0.6);
-            color: cyan;
-            border: 2px solid cyan;
+            color: white;
+            border: 2px solid white;
             padding: 12px 20px;
             border-radius: 8px;
             font-family: inherit;
@@ -189,8 +189,8 @@
             font-weight: bold;
             text-transform: uppercase;
             touch-action: none;
-            text-shadow: 0 0 5px cyan;
-            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+            text-shadow: 0 0 5px white;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
         }
         /* Safety fallback to hide the old mobile button if it's still cached */
         #mobile-start-btn {
@@ -214,7 +214,7 @@
         <div class="hud-text" style="color: #ff0055;">LIVES: <span id="livesEl">3</span></div>
         <div class="hud-text" style="color: #00ffaa;">LEVEL: <span id="levelEl">1</span></div>
         <div class="hud-text" style="color: #ffaa00;">BOMBS: <span id="bombsEl">3</span></div>
-        <div class="hud-text" style="color: #00ffff;">BOOST: <span id="boostEl">0</span></div>
+        <div class="hud-text" style="color: #ffffff;">BOOST: <span id="boostEl">0</span></div>
     </div>
 
     <div id="wave-msg" class="hidden"></div>
@@ -257,7 +257,7 @@
         <h3>Paused</h3>
         <button id="resume-btn">Resume</button>
         <button id="fullscreen-btn">Toggle Fullscreen</button>
-        <hr style="border-color: cyan; width: 100%; opacity: 0.5;">
+        <hr style="border-color: white; width: 100%; opacity: 0.5;">
         <h4 style="margin: 0; color: #ffff00;">Debug Tools</h4>
         <div>
             <input type="checkbox" id="invincible-check">
@@ -1189,7 +1189,7 @@
                         break;
                     case 'dart':
                         this.radius = 16;
-                        this.color = '#00ffff';
+                    this.color = '#ffffff';
                         this.speed = 4.8;
                         break;
                     case 'hex-yoyo':

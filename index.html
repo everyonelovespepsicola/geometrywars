@@ -192,8 +192,13 @@
             text-shadow: 0 0 5px cyan;
             box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
         }
-        #mobile-start-btn { top: 20px; right: 20px; }
         #mobile-bomb-btn { bottom: 200px; right: 40px; }
+        #mobile-pause-zone {
+            position: absolute;
+            top: 20%; left: 20%; width: 60%; height: 60%;
+            pointer-events: auto;
+            touch-action: none;
+        }
     </style>
 </head>
 <body>
@@ -212,7 +217,7 @@
 
     <!-- Mobile Controls Overlay -->
     <div id="mobile-controls" class="hidden">
-        <div id="mobile-start-btn" class="mobile-btn">START / PAUSE</div>
+        <div id="mobile-pause-zone"></div>
         <div id="mobile-bomb-btn" class="mobile-btn">BOMB</div>
         <div id="left-joystick" class="joystick-zone">
             <div id="left-knob" class="joystick-knob"></div>
@@ -3048,7 +3053,7 @@
         const mobileControlsContainer = document.getElementById('mobile-controls');
         if (isMobile && mobileControlsContainer) {
             mobileControlsContainer.classList.remove('hidden');
-            document.getElementById('controls-hint').innerText = "Use thumbsticks to Move/Shoot | Tap Start to Pause";
+            document.getElementById('controls-hint').innerText = "Use thumbsticks to Move/Shoot | Tap Center to Pause";
         }
 
         function setupJoystick(zoneId, stickName, knobId) {
@@ -3108,9 +3113,9 @@
         setupJoystick('left-joystick', 'left', 'left-knob');
         setupJoystick('right-joystick', 'right', 'right-knob');
 
-        const mobileStartPauseBtn = document.getElementById('mobile-start-btn');
-        if (mobileStartPauseBtn) {
-            mobileStartPauseBtn.addEventListener('touchstart', (e) => {
+        const mobilePauseZone = document.getElementById('mobile-pause-zone');
+        if (mobilePauseZone) {
+            mobilePauseZone.addEventListener('touchstart', (e) => {
                 e.preventDefault();
                 if (audioCtx.state === 'suspended') audioCtx.resume();
                 

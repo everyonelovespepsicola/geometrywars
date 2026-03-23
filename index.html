@@ -38,6 +38,8 @@
         }
 
         #start-screen,
+        #main-menu,
+        #settings-menu,
         #game-over-screen {
             position: absolute;
             top: 50%;
@@ -66,7 +68,7 @@
             text-transform: uppercase;
         }
 
-        button:hover {
+        button:hover, button.gamepad-selected {
             background: white;
             color: black;
         }
@@ -108,11 +110,15 @@
             text-transform: uppercase;
         }
 
-        #pause-menu div {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
+        .setting-row {
+            display: flex; gap: 10px; align-items: center; justify-content: center;
+            padding: 5px 10px;
+            border-radius: 5px;
+            transition: 0.2s;
+        }
+        .setting-row.gamepad-selected {
+            background: white;
+            color: black;
         }
 
         #fps-counter {
@@ -203,9 +209,41 @@
             pointer-events: auto;
             touch-action: none;
         }
+        #firefox-warning {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            color: rgb(255, 255, 255); /* Bright Orange */
+            text-align: center;
+            padding: 10px;
+            font-weight: bold;
+            z-index: 2000;
+            pointer-events: none;
+        }
+        #qrcode-toast {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.95);
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            border: 2px solid white;
+            z-index: 200;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: center;
+        }
     </style>
 </head>
 <body>
+
+    <!-- Browser Specific Warning -->
+    <div id="firefox-warning" class="hidden">🦊 Firefox Users: If using a controller, click the screen once with your mouse to enable audio!</div>
 
     <!-- UI Overlay -->
     <div id="ui-layer" class="hidden">
@@ -244,13 +282,41 @@
     <div id="start-screen">
         <h1 style="margin:0;">GEOMETRY WARS</h1>
         <p id="final-score-msg" style="font-size: 14px; color: #aaa;">Defend the grid.</p>
-        <button id="start-btn">Start Game</button>
+        <button id="start-btn">Press Start</button>
+    </div>
+
+    <div id="main-menu" class="hidden">
+        <h1 style="margin:0;">MAIN MENU</h1>
+        <button id="start-game-btn">Play Game</button>
+        <button id="settings-btn">Settings</button>
+    </div>
+
+    <div id="settings-menu" class="hidden">
+        <h1 style="margin:0;">SETTINGS</h1>
+        <div class="setting-row">
+            <input type="checkbox" id="settings-invincible-check">
+            <label for="settings-invincible-check">Invincible</label>
+        </div>
+        <div class="setting-row">
+            <input type="checkbox" id="settings-infinite-lives-check">
+            <label for="settings-infinite-lives-check">Infinite Lives</label>
+        </div>
+        <button id="settings-qrcode-btn">QR Code</button>
+        <button id="settings-back-btn">Back</button>
+    </div>
+
+    <div id="qrcode-toast" class="hidden">
+        <h2 style="margin:0;">SCAN TO PLAY</h2>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://everyonelovespepsicola.github.io/geometrywars/" alt="QR Code" width="200" height="200">
+        <button id="close-qrcode-btn">Close</button>
     </div>
 
     <div id="game-over-screen" class="hidden">
         <h1 style="margin:0; color: #ff0055;">GAME OVER</h1>
         <p id="game-over-score" style="font-size: 18px; color: #aaa;">Score: 0</p>
-        <button id="retry-btn">Retry</button>
+        <p id="continue-msg" style="font-size: 16px; color: white;">Would you like to continue?</p>
+        <button id="continue-btn">OK</button>
+        <button id="retry-btn">No, Restart</button>
     </div>
 
     <div id="pause-menu" class="hidden">
@@ -259,15 +325,15 @@
         <button id="fullscreen-btn">Toggle Fullscreen</button>
         <hr style="border-color: white; width: 100%; opacity: 0.5;">
         <h4 style="margin: 0; color: #ffff00;">Debug Tools</h4>
-        <div>
+        <div class="setting-row">
             <input type="checkbox" id="invincible-check">
             <label for="invincible-check">Invincible</label>
         </div>
-        <div>
+        <div class="setting-row">
             <input type="checkbox" id="infinite-lives-check">
             <label for="infinite-lives-check">Infinite Lives</label>
         </div>
-        <div>
+        <div class="setting-row">
             <input type="checkbox" id="show-lines-check">
             <label for="show-lines-check">Show Enemy Lines</label>
         </div>
@@ -281,22 +347,40 @@
         const ctx = canvas.getContext('2d');
         
         // --- AUDIO SYSTEM ---
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let audioCtx = null;
+        let noiseBuffer = null;
         
-        // Generate Noise Buffer for Explosions
-        const noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
-        const noiseData = noiseBuffer.getChannelData(0);
-        for (let i = 0; i < noiseBuffer.length; i++) {
-            noiseData[i] = Math.random() * 2 - 1;
+        // Universal Audio Unlocker for Autoplay Policies
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Generate Noise Buffer for Explosions
+                noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
+                const noiseData = noiseBuffer.getChannelData(0);
+                for (let i = 0; i < noiseBuffer.length; i++) {
+                    noiseData[i] = Math.random() * 2 - 1;
+                }
+            }
+            if (audioCtx.state !== 'running') {
+                audioCtx.resume();
+            }
         }
+        window.addEventListener('mousedown', initAudio);
+        window.addEventListener('keydown', initAudio);
+        window.addEventListener('touchstart', initAudio, { passive: true });
+        window.addEventListener('click', initAudio);
         
         let lastExplodeTime = 0;
         let lastCollectTime = 0;
         let lastSgwTime = 0;
+        let audioMutedUntil = 0;
 
         const sounds = {
             shoot: () => {
-                if (audioCtx.state === 'suspended') audioCtx.resume();
+                if (!audioCtx) return;
+                if (performance.now() < audioMutedUntil) return;
+                if (audioCtx.state !== 'running') audioCtx.resume();
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
                 osc.connect(gain);
@@ -313,54 +397,52 @@
                 osc.stop(audioCtx.currentTime + 0.1);
             },
             explode: () => {
+                if (!audioCtx) return;
+                if (performance.now() < audioMutedUntil) return;
                 const now = performance.now();
                 if (now - lastExplodeTime < 50) return; // Audio Throttle
                 lastExplodeTime = now;
                 
-                if (audioCtx.state === 'suspended') audioCtx.resume();
+                if (audioCtx.state !== 'running') audioCtx.resume();
                 const src = audioCtx.createBufferSource();
                 src.buffer = noiseBuffer;
                 const gain = audioCtx.createGain();
-                const filter = audioCtx.createBiquadFilter();
 
-                src.connect(filter);
-                filter.connect(gain);
+                src.connect(gain);
                 gain.connect(audioCtx.destination);
 
-                filter.type = 'lowpass';
-                filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
-                filter.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.3);
-
-                gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+                // Choppy, unfiltered static decay envelope
+                gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.15, audioCtx.currentTime + 0.05);
+                gain.gain.setValueAtTime(0.05, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0, audioCtx.currentTime + 0.15);
 
                 src.start();
-                src.stop(audioCtx.currentTime + 0.3);
+                src.stop(audioCtx.currentTime + 0.15);
             },
             bomb: () => {
-                if (audioCtx.state === 'suspended') audioCtx.resume();
+                if (!audioCtx) return;
+                if (performance.now() < audioMutedUntil) return;
+                if (audioCtx.state !== 'running') audioCtx.resume();
                 
-                // Massive Noise Explosion
+                // Big crunchy static explosion
                 const src = audioCtx.createBufferSource();
                 src.buffer = noiseBuffer;
                 const gain = audioCtx.createGain();
-                const filter = audioCtx.createBiquadFilter();
 
-                src.connect(filter);
-                filter.connect(gain);
+                src.connect(gain);
                 gain.connect(audioCtx.destination);
 
-                filter.type = 'lowpass';
-                filter.frequency.setValueAtTime(2000, audioCtx.currentTime);
-                filter.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 2.0);
-
-                gain.gain.setValueAtTime(1.2, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 2.0);
+                gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                for (let i = 1; i < 10; i++) {
+                    gain.gain.setValueAtTime(0.5 - (i * 0.05), audioCtx.currentTime + (i * 0.1));
+                }
+                gain.gain.setValueAtTime(0, audioCtx.currentTime + 1.0);
 
                 src.start();
-                src.stop(audioCtx.currentTime + 2.0);
+                src.stop(audioCtx.currentTime + 1.0);
 
-                // Sub-bass boom
+                // Stepped sub-bass rumble
                 const osc = audioCtx.createOscillator();
                 const oscGain = audioCtx.createGain();
                 osc.connect(oscGain);
@@ -368,62 +450,64 @@
 
                 osc.type = 'square';
                 osc.frequency.setValueAtTime(150, audioCtx.currentTime);
-                osc.frequency.exponentialRampToValueAtTime(20, audioCtx.currentTime + 2.0);
+                osc.frequency.setValueAtTime(100, audioCtx.currentTime + 0.2);
+                osc.frequency.setValueAtTime(60, audioCtx.currentTime + 0.4);
+                osc.frequency.setValueAtTime(40, audioCtx.currentTime + 0.6);
 
-                oscGain.gain.setValueAtTime(0.8, audioCtx.currentTime);
-                oscGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 2.0);
+                oscGain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+                oscGain.gain.setValueAtTime(0, audioCtx.currentTime + 1.0);
 
                 osc.start();
-                osc.stop(audioCtx.currentTime + 2.0);
+                osc.stop(audioCtx.currentTime + 1.0);
             },
             superGravityWell: () => {
+                if (!audioCtx) return;
+                if (performance.now() < audioMutedUntil) return;
                 const nowMs = performance.now();
                 if (nowMs - lastSgwTime < 500) return; // Throttle to prevent overlap clipping
                 lastSgwTime = nowMs;
                 
-                if (audioCtx.state === 'suspended') audioCtx.resume();
+                if (audioCtx.state !== 'running') audioCtx.resume();
                 
-                // Deep ominous drone (Simple version)
+                // Retro wobbling UFO drone (Wub Wub Wub)
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
-                const filter = audioCtx.createBiquadFilter();
                 
-                osc.connect(filter);
-                filter.connect(gain);
+                osc.connect(gain);
                 gain.connect(audioCtx.destination);
                 
-                osc.type = 'sawtooth';
-                osc.frequency.setValueAtTime(100, audioCtx.currentTime);
-                osc.frequency.exponentialRampToValueAtTime(20, audioCtx.currentTime + 4.0);
+                osc.type = 'square';
                 
-                filter.type = 'lowpass';
-                filter.frequency.setValueAtTime(400, audioCtx.currentTime);
-                filter.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 4.0);
+                // Rapidly alternate frequencies to create an 8-bit wobble
+                for (let i = 0; i < 40; i++) {
+                    osc.frequency.setValueAtTime(i % 2 === 0 ? 80 : 50, audioCtx.currentTime + (i * 0.1));
+                }
 
-                gain.gain.setValueAtTime(0, audioCtx.currentTime);
-                gain.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.2); // Fade in
-                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 4.0); // Long fade out
+                gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0, audioCtx.currentTime + 4.0);
 
                 osc.start();
                 osc.stop(audioCtx.currentTime + 4.0);
             },
             collect: () => {
+                if (!audioCtx) return;
+                if (performance.now() < audioMutedUntil) return;
                 const now = performance.now();
                 if (now - lastCollectTime < 25) return; // Audio Throttle
                 lastCollectTime = now;
 
-                if (audioCtx.state === 'suspended') audioCtx.resume();
+                if (audioCtx.state !== 'running') audioCtx.resume();
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
                 osc.connect(gain);
                 gain.connect(audioCtx.destination);
 
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(800, audioCtx.currentTime);
-                osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.05);
+                osc.type = 'square'; // Classic 8-bit blip coin sound
+                osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+                osc.frequency.setValueAtTime(900, audioCtx.currentTime + 0.05); // Hard step up
 
-                gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+                gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0, audioCtx.currentTime + 0.1);
 
                 osc.start();
                 osc.stop(audioCtx.currentTime + 0.05);
@@ -438,8 +522,12 @@
             const player = document.getElementById('bg-music');
             if (player) {
                 player.volume = 0.6;
-                player.play().catch(e => console.error("Music failed:", e));
-                musicPlaying = true;
+                const playPromise = player.play();
+                if (playPromise !== undefined) {
+                    playPromise.then(() => {
+                        musicPlaying = true;
+                    }).catch(e => console.error("Music failed:", e));
+                }
             }
         };
 
@@ -453,6 +541,16 @@
         const bombsEl = document.getElementById('bombsEl');
         const boostEl = document.getElementById('boostEl');
         const startBtn = document.getElementById('start-btn');
+        const mainMenu = document.getElementById('main-menu');
+        const settingsMenu = document.getElementById('settings-menu');
+        const startGameBtn = document.getElementById('start-game-btn');
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsBackBtn = document.getElementById('settings-back-btn');
+        const settingsQrcodeBtn = document.getElementById('settings-qrcode-btn');
+        const qrcodeToast = document.getElementById('qrcode-toast');
+        const closeQrcodeBtn = document.getElementById('close-qrcode-btn');
+        const settingsInvincibleCheck = document.getElementById('settings-invincible-check');
+        const settingsInfiniteLivesCheck = document.getElementById('settings-infinite-lives-check');
         const finalScoreMsg = document.getElementById('final-score-msg');
         const pauseMenu = document.getElementById('pause-menu');
         const resumeBtn = document.getElementById('resume-btn');
@@ -467,11 +565,14 @@
         const gameOverScreen = document.getElementById('game-over-screen');
         const gameOverScore = document.getElementById('game-over-score');
         const retryBtn = document.getElementById('retry-btn');
+        const continueBtn = document.getElementById('continue-btn');
+        const continueMsg = document.getElementById('continue-msg');
 
         // Game State
         let animationId;
         let score = 0;
         let scoreStreak = 0;
+        let difficultyMultiplier = 1.0;
         let highScore = localStorage.getItem('geoWarsHighScore') || 0;
         let lives = 5; 
         let bombs = 3;
@@ -483,7 +584,7 @@
         let levelTransitioning = false;
         let bossSpawned = false;
         let currentBossType = null;
-        let bossEncounterCounts = { sapphire: 0, ruby: 0, emerald: 0 };
+        let bossEncounterCounts = { sapphire: 0, ruby: 0, emerald: 0, mothership: 0 };
         let debugInvincible = false;
         let infiniteLives = false;
         let debugShowLines = false;
@@ -503,6 +604,7 @@
         let grid;
 
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (navigator.maxTouchPoints && navigator.maxTouchPoints > 2);
+        const isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
 
         // World and Camera
         const world = { width: 3000, height: 2000 };
@@ -600,6 +702,9 @@
         window.addEventListener('mousemove', (event) => {
             mouse.screenX = event.clientX;
             mouse.screenY = event.clientY;
+            if (inputMode === 'gamepad') {
+                document.querySelectorAll('.gamepad-selected').forEach(el => el.classList.remove('gamepad-selected'));
+            }
             inputMode = 'mouse';
         });
 
@@ -621,10 +726,22 @@
 
         invincibleCheck.addEventListener('change', (e) => {
             debugInvincible = e.target.checked;
+            settingsInvincibleCheck.checked = e.target.checked; // Sync with new menu
         });
 
         infiniteLivesCheck.addEventListener('change', (e) => {
             infiniteLives = e.target.checked;
+            settingsInfiniteLivesCheck.checked = e.target.checked; // Sync with new menu
+        });
+
+        settingsInvincibleCheck.addEventListener('change', (e) => {
+            debugInvincible = e.target.checked;
+            invincibleCheck.checked = e.target.checked;
+        });
+
+        settingsInfiniteLivesCheck.addEventListener('change', (e) => {
+            infiniteLives = e.target.checked;
+            infiniteLivesCheck.checked = e.target.checked;
         });
 
         showLinesCheck.addEventListener('change', (e) => {
@@ -1211,6 +1328,50 @@
                         this.hp = 5;
                         this.speed = 1.8;
                         break;
+                    case 'mothership':
+                        this.radius = 150;
+                        this.color = '#ff00ff'; // Magenta
+                        this.hp = 300;
+                        this.maxHp = 300;
+                        this.speed = 0.5;
+                        this.turrets = [];
+                        break;
+                    case 'mothership-mini':
+                        this.radius = 50;
+                        this.color = '#ff00ff'; // Magenta
+                        this.hp = 100;
+                        this.maxHp = 100;
+                        this.speed = 2.0; // Faster than big mothership
+                        this.spawnTimer = 0;
+                        this.spinSpeed = 0.05;
+                        break;
+                    case 'mothership-turret':
+                        this.radius = 20;
+                        this.color = '#ff0000'; // Red
+                        this.hp = 30;
+                        this.maxHp = 30;
+                        this.speed = 0;
+                        this.shootTimer = -(Math.random() * 2.0); // Desync initial shots
+                        this.shootThreshold = 1.0 + Math.random() * 1.5; // Randomize fire rate
+                        this.spinSpeed = 0.05;
+                        break;
+                    case 'mothership-final-turret':
+                        this.radius = 40;
+                        this.color = '#ff0000'; // Red
+                        this.hp = 60;
+                        this.maxHp = 60;
+                        this.speed = 0;
+                        this.shootTimer = -(Math.random() * 1.0); // Slight delay before first shot
+                        this.shootThreshold = 1.5 + Math.random() * 1.0; // Randomize missile rate
+                        this.spinSpeed = 0.03; // Slower, menacing spin
+                        break;
+                    case 'heat-seeker':
+                        this.radius = 18;
+                        this.color = '#ff4500'; // Orange Red
+                        this.hp = 2; // Takes 2 shots to take down
+                        this.maxHp = 2;
+                        this.speed = 9.0; // Faster than normal arrows
+                        break;
                     case 'emerald':
                         this.radius = 50;
                         this.color = '#50c878'; // Emerald Green
@@ -1230,6 +1391,12 @@
                         this.speed = 4.2 + Math.random() * 1.2; // Sped up to match fast pink enemies
                         break;
                 }
+
+                this.speed *= difficultyMultiplier;
+                if (this.hp > 1 && this.hp !== Infinity) {
+                    this.maxHp = Math.ceil(this.maxHp * difficultyMultiplier);
+                    this.hp = this.maxHp;
+                }
             }
 
             draw(ctx, view) {
@@ -1244,7 +1411,7 @@
                 ctx.rotate(this.angle);
                 
                 // Optimization: Only apply shadowBlur to bosses
-                if (['sapphire', 'ruby', 'emerald'].includes(this.type)) {
+                if (['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini'].includes(this.type)) {
                     ctx.shadowBlur = 10;
                     ctx.shadowColor = this.color;
                 }
@@ -1274,7 +1441,7 @@
                     ctx.lineWidth = 3;
                     ctx.stroke();
                 } else if (this.type === 'dog-bone-bomb') {
-                    const boneLength = 70; // Twice as long
+                    const boneLength = 60; // Overall 120 pixels long
                     ctx.beginPath();
                     ctx.moveTo(-boneLength + 8, 0);
                     ctx.lineTo(boneLength - 8, 0);
@@ -1386,6 +1553,66 @@
                     ctx.closePath();
                     ctx.strokeStyle = this.color;
                     ctx.lineWidth = 4;
+                    ctx.stroke();
+                } else if (this.type === 'mothership' || this.type === 'mothership-mini') {
+                    // Huge or Small Octagon
+                    ctx.beginPath();
+                    for (let i = 0; i < 8; i++) {
+                        const angle = i * Math.PI / 4 + this.angle;
+                        if (i === 0) ctx.moveTo(Math.cos(angle) * this.radius, Math.sin(angle) * this.radius);
+                        else ctx.lineTo(Math.cos(angle) * this.radius, Math.sin(angle) * this.radius);
+                    }
+                    ctx.closePath();
+                    const isInvulnerable = this.type === 'mothership' && this.turrets && this.turrets.some(t => !t.markedForDeletion);
+                    ctx.strokeStyle = isInvulnerable ? '#aaaaaa' : this.color;
+                    ctx.lineWidth = this.type === 'mothership' ? 6 : 4;
+                    ctx.stroke();
+                    if (isInvulnerable) {
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+                        ctx.fill();
+                    }
+                } else if (this.type === 'mothership-turret') {
+                    const size = this.radius * 0.8;
+                    ctx.rect(-size, -size, size * 2, size * 2);
+                    ctx.strokeStyle = this.color;
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(-size, -size);
+                    ctx.lineTo(size, size);
+                    ctx.moveTo(size, -size);
+                    ctx.lineTo(-size, size);
+                    ctx.stroke();
+                } else if (this.type === 'mothership-final-turret') {
+                    const size = this.radius * 0.8;
+                    ctx.rect(-size, -size, size * 2, size * 2);
+                    ctx.strokeStyle = this.color;
+                    ctx.lineWidth = 5;
+                    ctx.stroke();
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(-size, -size);
+                    ctx.lineTo(size, size);
+                    ctx.moveTo(size, -size);
+                    ctx.lineTo(-size, size);
+                    ctx.stroke();
+                    ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+                    ctx.fill();
+                } else if (this.type === 'heat-seeker') {
+                    ctx.beginPath();
+                    ctx.moveTo(this.radius, 0);
+                    ctx.lineTo(-this.radius, this.radius * 0.6);
+                    ctx.lineTo(-this.radius * 0.5, 0);
+                    ctx.lineTo(-this.radius, -this.radius * 0.6);
+                    ctx.closePath();
+                    ctx.fillStyle = this.color;
+                    ctx.fill();
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(-this.radius * 0.5, 0);
+                    ctx.lineTo(-this.radius * 1.5, (Math.random() - 0.5) * 5);
+                    ctx.strokeStyle = '#ffff00';
+                    ctx.lineWidth = 2;
                     ctx.stroke();
                 } else if (this.type === 'dart') {
                     // Triangle
@@ -1737,10 +1964,121 @@
                 }
 
                 // --- BOSS BEHAVIORS ---
+                if (this.type === 'mothership') {
+                    if (this.centerX === undefined) {
+                        this.centerX = this.x; // Start at edge
+                        this.centerY = this.y;
+                    }
+                    // Smoothly drift toward the center of the map while doing the hover pattern
+                    this.centerX += (world.width / 2 - this.centerX) * 0.005;
+                    this.centerY += (world.height / 2 - this.centerY) * 0.005;
+
+                    this.x = this.centerX + Math.sin(frame * 0.01) * 200;
+                    this.y = this.centerY + Math.cos(frame * 0.008) * 150;
+                    this.angle += 0.002 * 60 * dt; // Slow rotation
+                    if (this.turrets) {
+                        this.turrets = this.turrets.filter(t => !t.markedForDeletion);
+                        // Trigger the Final Turret once all outer ones are cleared
+                        if (this.turrets.length === 0 && !this.finalTurretSpawned) {
+                            this.finalTurretSpawned = true;
+                            const finalTurret = new Enemy(this.x, this.y, 'mothership-final-turret');
+                            finalTurret.parent = this;
+                            this.turrets.push(finalTurret); // Keeps the main boss invulnerable
+                            enemies.push(finalTurret);
+                        }
+                    }
+                    
+                    // Stage 3 Spawning (Final turret destroyed, vulnerable)
+                    if (this.finalTurretSpawned && this.turrets.length === 0) {
+                        this.spawnTimer = (this.spawnTimer || 0) + dt;
+                        if (this.spawnTimer > 1.0) { // Pours out 10 enemies each sec
+                            this.spawnTimer = 0;
+                            const types = ['grunt', 'weaver', 'spinner', 'hex-dodger'];
+                            for (let i = 0; i < 10; i++) {
+                                const offsetAngle = Math.random() * Math.PI * 2;
+                                const offsetDist = Math.random() * 50 + this.radius; // Appear around the edges of the boss
+                                enemies.push(new Enemy(this.x + Math.cos(offsetAngle) * offsetDist, this.y + Math.sin(offsetAngle) * offsetDist, types[Math.floor(Math.random() * types.length)]));
+                            }
+                        }
+                    }
+                    return;
+                }
+                
+                if (this.type === 'mothership-turret') {
+                    if (!this.parent || this.parent.markedForDeletion) {
+                        this.markedForDeletion = true;
+                        return;
+                    }
+                    const cornerAngle = this.parent.angle + this.angleOffset;
+                    
+                    const placementRadius = this.parent.radius + this.radius * 1.414; // Push out so corners perfectly touch
+                    this.x = this.parent.x + Math.cos(cornerAngle) * placementRadius;
+                    this.y = this.parent.y + Math.sin(cornerAngle) * placementRadius;
+                    
+                    this.shootTimer += dt;
+                    if (this.shootTimer > this.shootThreshold) {
+                        this.shootTimer = 0;
+                        this.shootThreshold = 1.0 + Math.random() * 1.5; // Pick new random firing interval
+                        const angle = Math.atan2(player.y - this.y, player.x - this.x);
+                        const arrow = new Enemy(this.x, this.y, 'arrow');
+                        arrow.velocity.x = Math.cos(angle);
+                        arrow.velocity.y = Math.sin(angle);
+                        arrow.angle = angle;
+                        arrow.color = '#ffaa00';
+                        enemies.push(arrow);
+                    }
+                    this.angle += this.spinSpeed * 60 * dt;
+                    return;
+                }
+
+                if (this.type === 'mothership-final-turret') {
+                    if (!this.parent || this.parent.markedForDeletion) {
+                        this.markedForDeletion = true;
+                        return;
+                    }
+                    this.x = this.parent.x;
+                    this.y = this.parent.y;
+                    
+                    this.shootTimer += dt;
+                    if (this.shootTimer > this.shootThreshold) {
+                        this.shootTimer = 0;
+                        this.shootThreshold = 1.5 + Math.random() * 1.0;
+                        const missile = new Enemy(this.x, this.y, 'heat-seeker');
+                        enemies.push(missile);
+                    }
+                    this.angle += this.spinSpeed * 60 * dt;
+                    return;
+                }
+
+                if (this.type === 'mothership-mini') {
+                    const angle = Math.atan2(player.y - this.y, player.x - this.x);
+                    this.velocity.x = Math.cos(angle);
+                    this.velocity.y = Math.sin(angle);
+                    
+                    this.spawnTimer = (this.spawnTimer || 0) + dt;
+                    if (this.spawnTimer > 1.0) { // Releases 6 standard enemies every sec
+                        this.spawnTimer = 0;
+                        const types = ['grunt', 'weaver', 'spinner'];
+                        for (let i = 0; i < 6; i++) {
+                            const offsetAngle = Math.random() * Math.PI * 2;
+                            const offsetDist = Math.random() * 20 + this.radius;
+                            enemies.push(new Enemy(this.x + Math.cos(offsetAngle) * offsetDist, this.y + Math.sin(offsetAngle) * offsetDist, types[Math.floor(Math.random() * types.length)]));
+                        }
+                    }
+                }
+
                 if (this.type === 'sapphire') {
-                    // Figure 8 pattern
-                    this.x = world.width / 2 + Math.sin(frame * 0.024) * (world.width * 0.2);
-                    this.y = world.height / 2 + Math.sin(frame * 0.048) * (world.height * 0.2);
+                    if (this.centerX === undefined) {
+                        this.centerX = this.x;
+                        this.centerY = this.y;
+                    }
+                    // Smoothly drift toward center
+                    this.centerX += (world.width / 2 - this.centerX) * 0.01;
+                    this.centerY += (world.height / 2 - this.centerY) * 0.01;
+
+                    // Figure 8 pattern offset by center drift
+                    this.x = this.centerX + Math.sin(frame * 0.024) * (world.width * 0.2);
+                    this.y = this.centerY + Math.sin(frame * 0.048) * (world.height * 0.2);
                     
                     // Spawn Darts (time-based)
                     this.spawnTimer = (this.spawnTimer || 0) + dt;
@@ -1801,7 +2139,7 @@
                     }
                 }
                 
-                if (this.type === 'dart' || this.type === 'arrow') {
+                if (this.type === 'dart' || this.type === 'arrow' || this.type === 'heat-seeker') {
                      this.angle = Math.atan2(this.velocity.y, this.velocity.x);
                 }
 
@@ -1816,7 +2154,7 @@
                 }
 
                 // Default chase behavior if not performing a special action (like dodging)
-                if (!isDodging && this.type !== 'spinner' && this.type !== 'dog-bone-bomb' && this.type !== 'gravity-well' && !this.type.startsWith('snake') && !['sapphire', 'emerald', 'ruby', 'hex-dodger'].includes(this.type)) {
+                if (!isDodging && this.type !== 'spinner' && this.type !== 'dog-bone-bomb' && this.type !== 'gravity-well' && !this.type.startsWith('snake') && !['sapphire', 'emerald', 'ruby', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'hex-dodger'].includes(this.type)) {
                     this.velocity.x = Math.cos(angleToPlayer);
                     this.velocity.y = Math.sin(angleToPlayer);
                     
@@ -2064,6 +2402,7 @@
         }
 
         function startNextLevel() {
+            audioMutedUntil = performance.now() + 250;
             enemies.forEach(e => e.markedForDeletion = true); // Clear all enemies
             projectiles.forEach(p => p.markedForDeletion = true);
             particles.forEach(p => p.markedForDeletion = true);
@@ -2084,7 +2423,7 @@
 
             const isBossLevel = level % 3 === 0;
             showLevelTitle(isBossLevel ? "BOSS FIGHT" : `LEVEL ${level}`, isBossLevel ? "red" : "white");
-            enemiesRemainingToSpawn = Math.floor(150 * Math.pow(1.1, level - 1));
+            enemiesRemainingToSpawn = Math.floor(150 * Math.pow(1.1, level - 1) * difficultyMultiplier);
         }
 
         function transitionToNextLevel() {
@@ -2143,19 +2482,32 @@
                     let type = 'sapphire';
                     if (level === 6) type = 'ruby';
                     if (level === 9) type = 'emerald';
-                    if (level > 9) type = ['sapphire', 'ruby', 'emerald'][Math.floor(Math.random() * 3)];
+                    if (level === 12) type = 'mothership';
+                    if (level > 12) return; // Stop spawning completely if going past level 12
                     
                     currentBossType = type;
-                    bossEncounterCounts[type]++;
+                    bossEncounterCounts[type] = (bossEncounterCounts[type] || 0) + 1;
 
-                    const boss = new Enemy(canvas.width/2, -100, type);
-                    boss.y = 100; // Move into view
+                    // Guarantee the boss spawns safely away from the player
+                    let safePos = getSafeEdgeSpawnPoint(150);
+                    const boss = new Enemy(safePos.x, safePos.y, type);
                     
-                    // Scale boss stats based on the number of times it has been encountered
-                    const encounters = bossEncounterCounts[type];
-                    boss.maxHp += (encounters - 1) * 50; // Add 50 HP per encounter
-                    boss.hp = boss.maxHp;
-                    boss.speed += (encounters - 1) * 0.3; // Make them noticeably faster
+                    if (type === 'mothership') {
+                        boss.finalTurretSpawned = false;
+                        for (let i = 0; i < 8; i++) {
+                            const turret = new Enemy(boss.x, boss.y, 'mothership-turret');
+                            turret.parent = boss;
+                            turret.angleOffset = (i * Math.PI) / 4; 
+                            boss.turrets.push(turret);
+                            enemies.push(turret);
+                        }
+                    } else {
+                        // Scale boss stats based on the number of times it has been encountered
+                        const encounters = bossEncounterCounts[type];
+                        boss.maxHp += (encounters - 1) * 50; // Add 50 HP per encounter
+                        boss.hp = boss.maxHp;
+                        boss.speed += (encounters - 1) * 0.3; // Make them noticeably faster
+                    }
 
                     enemies.push(boss);
                     bossSpawned = true;
@@ -2163,17 +2515,21 @@
 
                 // Handle Boss Minion Cap & Spawning
                 const encounters = bossEncounterCounts[currentBossType] || 1;
-                const bossEnemyCap = 5 + (encounters * 5); // Enemy cap ramps up each encounter
+                const bossEnemyCap = currentBossType === 'mothership' ? 80 : 5 + (encounters * 5); // Increased cap to support pouring swarms
                 
-                const bossAlive = enemies.some(e => ['sapphire', 'ruby', 'emerald'].includes(e.type));
+                const bossAlive = enemies.some(e => ['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini'].includes(e.type));
                 if (bossAlive && enemies.length < bossEnemyCap) {
                     spawnTimer += dt;
-                    if (spawnTimer > 1.0) { // Spawn 1 minion every second during the fight
+                    const spawnRate = currentBossType === 'mothership' ? 0.35 : 1.0; // Much more chaotic spawn rate
+                    if (spawnTimer > spawnRate) { 
                         spawnTimer = 0;
-                        const radius = 30;
-                        const pos = getSafeEdgeSpawnPoint(radius);
-                        const types = ['grunt', 'weaver', 'spinner'];
-                        enemies.push(new Enemy(pos.x, pos.y, types[Math.floor(Math.random() * types.length)]));
+                        const spawnCount = currentBossType === 'mothership' ? 3 : 1; // Spawn 3 at a time for the final boss
+                        for (let i = 0; i < spawnCount; i++) {
+                            const radius = 30;
+                            const pos = getSafeEdgeSpawnPoint(radius);
+                            const types = currentBossType === 'mothership' ? ['grunt', 'weaver', 'spinner', 'hex-dodger'] : ['grunt', 'weaver', 'spinner'];
+                            enemies.push(new Enemy(pos.x, pos.y, types[Math.floor(Math.random() * types.length)]));
+                        }
                     }
                 }
 
@@ -2326,6 +2682,7 @@
             isPaused = !isPaused;
 
             if (isPaused) {
+                menuIndex = 0;
                 // Pause the game
                 cancelAnimationFrame(animationId);
                 pauseMenu.classList.remove('hidden');
@@ -2345,13 +2702,20 @@
             }
         }
 
-        function resetGame() {
-            score = 0;
-            scoreStreak = 0;
+        function resetGame(isContinue = false) {
+            initAudio();
+            audioMutedUntil = performance.now() + 250;
+            if (isContinue) {
+                difficultyMultiplier *= 1.1; // 10% harder
+            } else {
+                difficultyMultiplier = 1.0;
+                score = 0;
+                scoreStreak = 0;
+            }
             lives = 5;
-            nextLifeThreshold = 15000;
+            nextLifeThreshold = score + 15000;
             bombs = 3;
-            nextBombThreshold = 30000;
+            nextBombThreshold = score + 30000;
             scoreEl.innerHTML = score;
             livesEl.innerHTML = lives;
             bombsEl.innerHTML = bombs;
@@ -2361,13 +2725,11 @@
             hexSpawnsTriggered = 0;
             bossSpawned = false;
             currentBossType = null;
-            bossEncounterCounts = { sapphire: 0, ruby: 0, emerald: 0 };
+            bossEncounterCounts = { sapphire: 0, ruby: 0, emerald: 0, mothership: 0 };
             spawnTimer = 0;
             cornerSpawnTimer = 0;
             waveMsg.classList.add('hidden');
             showLinesCheck.checked = false; debugShowLines = false;
-            invincibleCheck.checked = false; debugInvincible = false;
-            infiniteLivesCheck.checked = false; infiniteLives = false;
             levelEl.innerText = level;
             projectiles = [];
             enemies = [];
@@ -2377,28 +2739,46 @@
             particlePool = new Pool(Particle, 1000);
             grid = new Grid(world.width, world.height, 50);
             player = new Player(world.width / 2, world.height / 2);
-            enemiesRemainingToSpawn = 150;
+            enemiesRemainingToSpawn = Math.floor(150 * difficultyMultiplier);
             bombEffect = { active: false, radius: 0, alpha: 0, isDeathBomb: false, respawnQueue: [], x: 0, y: 0 };
             miniBombEffects = [];
             gameActive = true;
             levelTransitioning = false;
             uiLayer.classList.remove('hidden');
             startScreen.classList.add('hidden');
+            mainMenu.classList.add('hidden');
+            settingsMenu.classList.add('hidden');
             gameOverScreen.classList.add('hidden');
             canvas.classList.remove('blurred-bg');
             const musicPlayer = document.getElementById('bg-music');
             if (musicPlayer) musicPlayer.currentTime = 0; // Restart music from beginning
+
+            if (isFirefox) {
+                const ffoxWarning = document.getElementById('firefox-warning');
+                ffoxWarning.classList.remove('hidden');
+                setTimeout(() => {
+                    ffoxWarning.classList.add('hidden');
+                }, 5000);
+            }
 
             sounds.startMusic();
             animate();
             showLevelTitle("LEVEL 1", "white");
         }
 
-        function gameOver() {
+        function gameOver(isWin = false) {
             gameActive = false;
             uiLayer.classList.add('hidden');
             cancelAnimationFrame(animationId);
             gameOverScreen.classList.remove('hidden');
+            const h1 = gameOverScreen.querySelector('h1');
+            if (isWin === true) {
+                h1.innerText = "YOU WIN!";
+                h1.style.color = "#00ffaa";
+            } else {
+                h1.innerText = "GAME OVER";
+                h1.style.color = "#ff0055";
+            }
             canvas.classList.add('blurred-bg');
             gameOverScore.innerText = `Final Score: ${score}`;
             const player = document.getElementById('bg-music');
@@ -2409,7 +2789,7 @@
                 localStorage.setItem('geoWarsHighScore', highScore);
                 highScoreEl.innerHTML = highScore;
             }
-            pollGamepadsForStart();
+            menuIndex = 0;
         }
 
         function animate() {
@@ -2473,7 +2853,9 @@
                 }
             } else { // Boss Level Failsafe
                 if (bossSpawned && enemies.length === 0 && !bombEffect.isDeathBomb) {
-                    transitionToNextLevel();
+                    if (level < 12) {
+                        transitionToNextLevel();
+                    }
                 }
             }
 
@@ -2524,7 +2906,7 @@
                 mb.alpha -= 2.0 * dt;
 
                 enemies.forEach(e => {
-                    if (!e.markedForDeletion && !['sapphire', 'ruby', 'emerald', 'super-gravity-well', 'gravity-well'].includes(e.type)) {
+                    if (!e.markedForDeletion && !['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'dog-bone-bomb'].includes(e.type)) {
                         const distSq = (mb.x - e.x)**2 + (mb.y - e.y)**2;
                         if (distSq < (mb.radius + e.radius)**2) {
                             e.markedForDeletion = true;
@@ -2545,6 +2927,11 @@
                                     seg.velocity.x = Math.cos(explodeAngle);
                                     seg.velocity.y = Math.sin(explodeAngle);
                                 });
+                            } else if (e.type === 'gravity-well') {
+                                enemies.push(new Enemy(e.x, e.y, 'super-gravity-well'));
+                            } else if (e.type === 'super-gravity-well') {
+                                if (grid) grid.applyForce(e.x, e.y, 1500, 50); // Massive outward explosion wave
+                                createExplosion(e.x, e.y, '#ffffff');
                             } else if (e.type !== 'hex-yoyo' && e.type !== 'dog-bone-bomb') {
                                 orbs.push(new Orb(e.x, e.y));
                             }
@@ -2599,10 +2986,10 @@
                         if (distSq < (bombEffect.radius + enemy.radius)**2) {
                             if (!enemy.markedForDeletion) {
                                 // Bosses are immune to bombs
-                                if (['sapphire', 'ruby', 'emerald'].includes(enemy.type)) return;
+                                if (['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret'].includes(enemy.type)) return;
 
                                 if (bombEffect.isDeathBomb) {
-                                    if (enemy.type !== 'snake-body' && enemy.type !== 'hex-yoyo') {
+                                    if (enemy.type !== 'snake-body' && enemy.type !== 'hex-yoyo' && enemy.type !== 'mothership-turret' && enemy.type !== 'mothership-final-turret') {
                                         bombEffect.respawnQueue.push(enemy.type);
                                     }
                                 } else {
@@ -2671,6 +3058,18 @@
                             }
                         }
 
+                        if (enemy.type === 'mothership') {
+                            const isInvulnerable = enemy.turrets && enemy.turrets.some(t => !t.markedForDeletion);
+                            if (isInvulnerable) {
+                                const onlyFinalTurretLeft = enemy.turrets.every(t => t.type === 'mothership-final-turret');
+                                if (!onlyFinalTurretLeft) {
+                                    projectile.markedForDeletion = true;
+                                    createExplosion(projectile.x, projectile.y, '#ffffff');
+                                }
+                                return;
+                            }
+                        }
+
                         // Hit!
                         createExplosion(enemy.x, enemy.y, enemy.color);
                         
@@ -2678,7 +3077,7 @@
                         projectile.markedForDeletion = true;
 
                         // Spawn orb BEFORE checking for boss type
-                        if (enemy.hp <= 0 && !['sapphire', 'ruby', 'emerald', 'hex-yoyo'].includes(enemy.type)) {
+                        if (enemy.hp <= 0 && !['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'hex-yoyo'].includes(enemy.type)) {
                             orbs.push(new Orb(enemy.x, enemy.y));
                        }
 
@@ -2708,20 +3107,37 @@
                                 for(let i=0; i<4; i++) {
                                     enemies.push(new Enemy(enemy.x, enemy.y, 'grunt'));
                                 }
-                            } else if (['sapphire', 'ruby', 'emerald'].includes(enemy.type)) {
+                            } else if (['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini'].includes(enemy.type)) {
                                 // Boss Defeated
                                 for (let i = 0; i < 50; i++) { // Shower of orbs
                                     orbs.push(new Orb(enemy.x + (Math.random() - 0.5) * 50, enemy.y + (Math.random() - 0.5) * 50));
                                 }
                                 addScore(5000);
                                 
-                                // Spawn a ramping cluster of aggressive Hex-Dodgers
-                                const encounters = bossEncounterCounts[enemy.type] || 1;
-                                const hexCount = 2 + (encounters * 2); 
-                                for (let i = 0; i < hexCount; i++) {
-                                    let hex = new Enemy(enemy.x + (Math.random() - 0.5) * 100, enemy.y + (Math.random() - 0.5) * 100, 'hex-dodger');
-                                    hex.angry = true;
-                                    enemies.push(hex);
+                                if (enemy.type === 'mothership') {
+                                    for (let i = 0; i < 3; i++) {
+                                        const mini = new Enemy(enemy.x, enemy.y, 'mothership-mini');
+                                        const angle = (i * Math.PI * 2) / 3;
+                                        mini.x += Math.cos(angle) * 100;
+                                        mini.y += Math.sin(angle) * 100;
+                                        enemies.push(mini);
+                                    }
+                                } else if (enemy.type === 'mothership-mini') {
+                                    const others = enemies.filter(e => e.type === 'mothership-mini' && !e.markedForDeletion);
+                                    if (others.length === 0) {
+                                        setTimeout(() => {
+                                            gameOver(true); // Game complete win
+                                        }, 2000);
+                                    }
+                                } else {
+                                    // Spawn a ramping cluster of aggressive Hex-Dodgers
+                                    const encounters = bossEncounterCounts[enemy.type] || 1;
+                                    const hexCount = 2 + (encounters * 2); 
+                                    for (let i = 0; i < hexCount; i++) {
+                                        let hex = new Enemy(enemy.x + (Math.random() - 0.5) * 100, enemy.y + (Math.random() - 0.5) * 100, 'hex-dodger');
+                                        hex.angry = true;
+                                        enemies.push(hex);
+                                    }
                                 }
                             } else if (enemy.type === 'snake-head') {
                                 addScore(1000);
@@ -2748,7 +3164,7 @@
                 // Gravity Well Absorption Logic
                 if (enemy.type === 'gravity-well' || enemy.type === 'super-gravity-well') {
                     enemies.forEach((other, otherIndex) => {
-                        const isAbsorbable = other !== enemy && !['super-gravity-well', 'proton', 'hex-yoyo'].includes(other.type) && !(enemy.type === 'gravity-well' && other.type === 'gravity-well');
+                        const isAbsorbable = other !== enemy && !['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'super-gravity-well', 'proton', 'hex-yoyo'].includes(other.type) && !(enemy.type === 'gravity-well' && other.type === 'gravity-well');
                         if (isAbsorbable) { // Using squared distance is faster
                             const combinedRadius = enemy.radius + other.radius;
                             if (Math.abs(enemy.x - other.x) > combinedRadius + 5 ||
@@ -2810,7 +3226,7 @@
                             // Spawn expanding mini-bomb
                             miniBombEffects.push({ x: enemy.x, y: enemy.y, radius: 0, alpha: 1 });
                         } else if (isShieldHit) {
-                            if (!enemy.markedForDeletion && !['sapphire', 'ruby', 'emerald'].includes(enemy.type)) {
+                            if (!enemy.markedForDeletion && !['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret'].includes(enemy.type)) {
                                 enemy.markedForDeletion = true;
                                 createExplosion(enemy.x, enemy.y, enemy.color);
                                 
@@ -2864,7 +3280,7 @@
                             }
                             
                             // Kill enemy that hit player
-                            if (enemy.type !== 'super-gravity-well' && !['sapphire', 'ruby', 'emerald'].includes(enemy.type)) {
+                            if (enemy.type !== 'super-gravity-well' && !['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret'].includes(enemy.type)) {
                                 enemy.markedForDeletion = true;
                                 if (enemy.type === 'snake-head') {
                                     enemy.segments.forEach(seg => {
@@ -2878,7 +3294,7 @@
                                     });
                                 }
                             }
-                            if (enemy.type !== 'hex-yoyo' && enemy.type !== 'super-gravity-well' && !['sapphire', 'ruby', 'emerald'].includes(enemy.type)) {
+                            if (enemy.type !== 'hex-yoyo' && enemy.type !== 'super-gravity-well' && !['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret'].includes(enemy.type)) {
                                 orbs.push(new Orb(enemy.x, enemy.y));
                             } else if (enemy.type === 'hex-yoyo') {
                                 if (enemy.owner) {
@@ -3012,6 +3428,24 @@
             // Restore context to pre-camera state for UI drawing
             ctx.restore();
 
+            // Draw Boss Life Bar
+            const activeBosses = enemies.filter(e => ['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini'].includes(e.type));
+            if (activeBosses.length > 0) {
+                let totalHp = activeBosses.reduce((sum, e) => sum + e.hp, 0);
+                let totalMaxHp = activeBosses.reduce((sum, e) => sum + e.maxHp, 0);
+                let hpPercent = Math.max(0, totalHp / totalMaxHp);
+                const barWidth = Math.min(800, canvas.width * 0.6);
+                const barHeight = 8;
+                const barX = (canvas.width - barWidth) / 2;
+                const barY = 20; 
+                
+                ctx.fillStyle = '#ff0000';
+                if (activeBosses.some(e => e.type === 'mothership' && e.turrets && e.turrets.some(t => !t.markedForDeletion))) {
+                    ctx.fillStyle = '#555555';
+                }
+                ctx.fillRect(barX, barY, barWidth * hpPercent, barHeight);
+            }
+
             // UI updates (FPS counter etc)
             fpsFrames++;
             if (now - lastTime >= 1000) {
@@ -3022,20 +3456,88 @@
             enemiesAliveCounterEl.innerText = `Enemies Alive: ${enemies.length}`;
         }
 
-        function pollGamepadsForStart() {
-            if (gameActive) return;
+        let gamepadMenuReady = false;
+        let menuIndex = 0;
+        let lastDpadY = 0;
+        let lastConfirm = false;
+
+        function getVisibleMenuElements() {
+            if (!qrcodeToast.classList.contains('hidden')) return [closeQrcodeBtn];
+            if (!startScreen.classList.contains('hidden')) return [startBtn];
+            if (!mainMenu.classList.contains('hidden')) return [startGameBtn, settingsBtn];
+            if (!settingsMenu.classList.contains('hidden')) return [settingsInvincibleCheck, settingsInfiniteLivesCheck, settingsQrcodeBtn, settingsBackBtn];
+            if (!gameOverScreen.classList.contains('hidden')) return [continueBtn, retryBtn];
+            if (isPaused && !pauseMenu.classList.contains('hidden')) return [resumeBtn, fullscreenBtn, invincibleCheck, infiniteLivesCheck, showLinesCheck, skipLevelBtn];
+            return [];
+        }
+
+        function pollGamepadsForMenus() {
+            if (gameActive && !isPaused) {
+                requestAnimationFrame(pollGamepadsForMenus);
+                return;
+            }
             
             const gamepads = navigator.getGamepads();
-            for (const gp of gamepads) {
-                if (gp && gp.buttons.some(b => b.pressed)) {
-                    if (audioCtx.state === 'suspended') audioCtx.resume();
-                    if (!startScreen.classList.contains('hidden') || !gameOverScreen.classList.contains('hidden')) {
-                        resetGame();
-                        return;
+            let gp = null;
+            for (let i = 0; i < gamepads.length; i++) {
+                if (gamepads[i] && gamepads[i].connected) {
+                    gp = gamepads[i];
+                    break;
+                }
+            }
+
+            if (gp) {
+                const elements = getVisibleMenuElements();
+                if (elements.length > 0) {
+                    if (menuIndex >= elements.length) menuIndex = 0;
+
+                    const stickY = gp.axes[1] || 0;
+                    const dpadUp = gp.buttons[12] && gp.buttons[12].pressed;
+                    const dpadDown = gp.buttons[13] && gp.buttons[13].pressed;
+
+                    let currentY = 0;
+                    if (dpadUp || stickY < -0.5) currentY = -1;
+                    else if (dpadDown || stickY > 0.5) currentY = 1;
+
+                    if (currentY !== 0 || (gp.buttons[0] && gp.buttons[0].pressed)) {
+                        inputMode = 'gamepad';
+                    }
+
+                    if (currentY !== 0 && lastDpadY === 0) {
+                        menuIndex += currentY;
+                        if (menuIndex < 0) menuIndex = elements.length - 1;
+                        if (menuIndex >= elements.length) menuIndex = 0;
+                    }
+                    lastDpadY = currentY;
+
+                    if (inputMode === 'gamepad') {
+                        elements.forEach((el, idx) => {
+                            let target = el.tagName === 'INPUT' ? el.parentElement : el;
+                            if (idx === menuIndex) {
+                                target.classList.add('gamepad-selected');
+                            } else {
+                                target.classList.remove('gamepad-selected');
+                            }
+                        });
+                    }
+
+                    const confirmPressed = gp.buttons[0] && gp.buttons[0].pressed;
+                    if (confirmPressed && !lastConfirm && gamepadMenuReady) {
+                        initAudio();
+                        elements[menuIndex].click(); // Simulate clicking the highlighted button or checkbox
+                        
+                        gamepadMenuReady = false;
+                        menuIndex = 0; 
+                        setTimeout(() => { gamepadMenuReady = true; }, 300);
+                    }
+                    lastConfirm = confirmPressed;
+                    
+                    if (!gamepadMenuReady && !confirmPressed) {
+                        gamepadMenuReady = true;
                     }
                 }
             }
-            requestAnimationFrame(pollGamepadsForStart);
+            requestAnimationFrame(pollGamepadsForMenus);
         }
 
         // --- Mobile Controls Initialization & Logic ---
@@ -3047,6 +3549,8 @@
             // Hide the default desktop buttons so the tap zone is the only way to start
             startBtn.style.display = 'none';
             retryBtn.style.display = 'none';
+            continueBtn.style.display = 'none';
+            continueMsg.innerText = "Tap center of screen to Continue (+10% Difficulty)";
             startScreen.style.pointerEvents = 'none';
             gameOverScreen.style.pointerEvents = 'none';
             
@@ -3114,12 +3618,18 @@
         if (mobilePauseZone) {
             mobilePauseZone.addEventListener('touchstart', (e) => {
                 e.preventDefault();
-                if (audioCtx.state === 'suspended') audioCtx.resume();
+                initAudio();
                 
                 if (gameActive) {
                     togglePause();
-                } else if (!gameOverScreen.classList.contains('hidden') || !startScreen.classList.contains('hidden')) {
-                    resetGame(); // Triggers start from the initial screen or game over screen
+                } else if (!gameOverScreen.classList.contains('hidden')) {
+                    resetGame(true); // Triggers continue
+                } else if (!startScreen.classList.contains('hidden')) {
+                        startScreen.classList.add('hidden');
+                        mainMenu.classList.remove('hidden');
+                        if (!musicPlaying) sounds.startMusic();
+                    } else if (!mainMenu.classList.contains('hidden')) {
+                        resetGame(false);
                 }
             }, { passive: false });
         }
@@ -3133,16 +3643,46 @@
         }
 
         startBtn.addEventListener('click', () => {
-            if (audioCtx.state === 'suspended') audioCtx.resume();
-            resetGame();
+            initAudio();
+            startScreen.classList.add('hidden');
+            mainMenu.classList.remove('hidden');
+            if (!musicPlaying) sounds.startMusic();
+        });
+
+        startGameBtn.addEventListener('click', () => {
+            initAudio();
+            resetGame(false);
+        });
+
+        settingsBtn.addEventListener('click', () => {
+            mainMenu.classList.add('hidden');
+            settingsMenu.classList.remove('hidden');
+        });
+
+        settingsQrcodeBtn.addEventListener('click', () => {
+            qrcodeToast.classList.remove('hidden');
+        });
+
+        closeQrcodeBtn.addEventListener('click', () => {
+            qrcodeToast.classList.add('hidden');
+        });
+
+        settingsBackBtn.addEventListener('click', () => {
+            settingsMenu.classList.add('hidden');
+            mainMenu.classList.remove('hidden');
+        });
+
+        continueBtn.addEventListener('click', () => {
+            initAudio();
+            resetGame(true);
         });
 
         retryBtn.addEventListener('click', () => {
-            if (audioCtx.state === 'suspended') audioCtx.resume();
-            resetGame();
+            initAudio();
+            resetGame(false);
         });
 
-        pollGamepadsForStart();
+        pollGamepadsForMenus();
 
         function pollGamepadsForPause() {
             if (gamepadIndex !== null) {

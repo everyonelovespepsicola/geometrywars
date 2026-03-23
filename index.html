@@ -247,6 +247,7 @@
     <div id="pause-menu" class="hidden">
         <h3>Paused</h3>
         <button id="resume-btn">Resume</button>
+        <button id="fullscreen-btn">Toggle Fullscreen</button>
         <hr style="border-color: cyan; width: 100%; opacity: 0.5;">
         <h4 style="margin: 0; color: #ffff00;">Debug Tools</h4>
         <div>
@@ -446,6 +447,7 @@
         const finalScoreMsg = document.getElementById('final-score-msg');
         const pauseMenu = document.getElementById('pause-menu');
         const resumeBtn = document.getElementById('resume-btn');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
         const invincibleCheck = document.getElementById('invincible-check');
         const infiniteLivesCheck = document.getElementById('infinite-lives-check');
         const showLinesCheck = document.getElementById('show-lines-check');
@@ -580,6 +582,14 @@
 
 
         resumeBtn.addEventListener('click', togglePause);
+
+        fullscreenBtn.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {});
+            } else {
+                document.exitFullscreen();
+            }
+        });
 
         invincibleCheck.addEventListener('change', (e) => {
             debugInvincible = e.target.checked;

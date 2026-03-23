@@ -16,7 +16,10 @@ A fast-paced, neon-infused arcade twin-stick shooter built with HTML5 Canvas and
 - **Boss Fights:** Challenging multi-phase bosses (Sapphire, Ruby, Emerald) spawn every 3 levels.
 - **Power-ups & Progression:** Build your score streak for weapon spread and fire rate upgrades. Earn extra lives (every 15,000 pts) and bombs (every 30,000 pts).
 - **Gamepad Support:** Full controller support for an authentic arcade experience.
+- **Mobile Touch Controls:** Virtual twin-stick overlays and responsive camera zoom for seamless gameplay on smartphones and tablets.
 - **Procedural Audio:** Synthesized sound effects generated dynamically using the Web Audio API.
+- **Instant Mobile Play:** Generate a QR code directly from the main or pause menus to instantly transfer your session to a mobile device.
+- **Debug & Settings Menus:** Toggle Invincibility, Infinite Lives, Show Enemy Lines, or Skip Levels mid-game via the pause menu.
 
 ## Controls
 
@@ -32,6 +35,12 @@ A fast-paced, neon-infused arcade twin-stick shooter built with HTML5 Canvas and
 - **Aim & Shoot:** Right Stick
 - **Bomb:** Right Trigger (RT)
 - **Pause:** Start Button
+
+### Mobile Touch
+- **Move:** Left Virtual Joystick
+- **Aim & Shoot:** Right Virtual Joystick
+- **Bomb:** Tap "BOMB" Button
+- **Pause / Start:** Tap the center of the screen
 
 ## Gameplay Tips
 

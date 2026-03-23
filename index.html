@@ -1143,13 +1143,13 @@
                         this.speed = 6;
                         break;
                     case 'dog-bone-bomb':
-                        this.radius = 15; // Tight center collision (requires flying through middle)
+                        this.radius = 30; // Larger trigger zone
                         this.color = '#ffaa00'; // Orange
                         this.speed = 0.5 + Math.random() * 0.5; // Wander a little
                         this.hp = Infinity; // Destroyed by collision trigger, not shooting
                         const dbbAngle = Math.random() * Math.PI * 2;
                         this.velocity = { x: Math.cos(dbbAngle), y: Math.sin(dbbAngle) };
-                        this.spinSpeed = (Math.random() - 0.5) * 0.1; // Lazy spin
+                        this.spinSpeed = (Math.random() - 0.5) * 0.02; // Slower lazy spin
                         break;
                     case 'mayfly':
                         this.radius = 20; // Doubled size again

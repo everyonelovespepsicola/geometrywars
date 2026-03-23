@@ -192,6 +192,10 @@
             text-shadow: 0 0 5px cyan;
             box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
         }
+        /* Safety fallback to hide the old mobile button if it's still cached */
+        #mobile-start-btn {
+            display: none !important;
+        }
         #mobile-bomb-btn { bottom: 200px; right: 40px; }
         #mobile-pause-zone {
             position: absolute;
@@ -3054,6 +3058,14 @@
         if (isMobile && mobileControlsContainer) {
             mobileControlsContainer.classList.remove('hidden');
             document.getElementById('controls-hint').innerText = "Use thumbsticks to Move/Shoot | Tap Center to Pause";
+            
+            // Hide the default desktop buttons so the tap zone is the only way to start
+            startBtn.style.display = 'none';
+            retryBtn.style.display = 'none';
+            startScreen.style.pointerEvents = 'none';
+            gameOverScreen.style.pointerEvents = 'none';
+            
+            finalScoreMsg.innerText = "Tap center of screen to Start / Pause";
         }
 
         function setupJoystick(zoneId, stickName, knobId) {

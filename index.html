@@ -493,7 +493,7 @@
         let particlePool;
         let grid;
 
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (navigator.maxTouchPoints && navigator.maxTouchPoints > 2);
 
         // World and Camera
         const world = { width: 3000, height: 2000 };
@@ -511,9 +511,15 @@
         canvas.height = window.innerHeight;
 
         function updateCameraZoom() {
-            if (isMobile) {
-                // Zoom out further in portrait mode ("skinny") to show more horizontal area
-                camera.zoom = window.innerHeight > window.innerWidth ? 0.6 : 0.85;
+            // Treat as mobile view if on a touch device OR if the screen width is small (desktop testing)
+            if (isMobile || window.innerWidth <= 1024) {
+                if (window.innerHeight > window.innerWidth) {
+                    // Portrait (Skinny) - Force at least 1500 pixels of the map width to be visible
+                    camera.zoom = Math.max(0.35, window.innerWidth / 1500);
+                } else {
+                    // Landscape (Wider) - Base zoom on height instead
+                    camera.zoom = Math.max(0.45, window.innerHeight / 1200);
+                }
             } else {
                 camera.zoom = 1.5;
             }

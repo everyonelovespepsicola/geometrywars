@@ -2864,7 +2864,7 @@
                             }
                             
                             // Kill enemy that hit player
-                            if (enemy.type !== 'super-gravity-well') {
+                            if (enemy.type !== 'super-gravity-well' && !['sapphire', 'ruby', 'emerald'].includes(enemy.type)) {
                                 enemy.markedForDeletion = true;
                                 if (enemy.type === 'snake-head') {
                                     enemy.segments.forEach(seg => {
@@ -2878,28 +2878,13 @@
                                     });
                                 }
                             }
-                            if (enemy.type !== 'hex-yoyo' && enemy.type !== 'super-gravity-well') {
+                            if (enemy.type !== 'hex-yoyo' && enemy.type !== 'super-gravity-well' && !['sapphire', 'ruby', 'emerald'].includes(enemy.type)) {
                                 orbs.push(new Orb(enemy.x, enemy.y));
                             } else if (enemy.type === 'hex-yoyo') {
                                 if (enemy.owner) {
                                     enemy.owner.yoyoOut = false;
                                     enemy.owner.nextYoyoMode = 'around-the-world';
                                     enemy.owner.angry = true;
-                                }
-                            }
-
-                            if (['sapphire', 'ruby', 'emerald'].includes(enemy.type)) {
-                                for (let i = 0; i < 50; i++) { // Shower of orbs
-                                    orbs.push(new Orb(enemy.x + (Math.random() - 0.5) * 50, enemy.y + (Math.random() - 0.5) * 50));
-                                }
-                                addScore(5000);
-                                
-                                const encounters = bossEncounterCounts[enemy.type] || 1;
-                                const hexCount = 2 + (encounters * 2);
-                                for (let i = 0; i < hexCount; i++) {
-                                    let hex = new Enemy(enemy.x + (Math.random() - 0.5) * 100, enemy.y + (Math.random() - 0.5) * 100, 'hex-dodger');
-                                    hex.angry = true;
-                                    enemies.push(hex);
                                 }
                             }
 

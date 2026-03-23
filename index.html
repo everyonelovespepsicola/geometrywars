@@ -493,12 +493,14 @@
         let particlePool;
         let grid;
 
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
         // World and Camera
         const world = { width: 3000, height: 2000 };
         const camera = {
             x: world.width / 2,
             y: world.height / 2,
-            zoom: 1.5,
+            zoom: 1.5, // Handled dynamically below
             lerpFactor: 0.05 // Smoothing factor for camera movement
         };
 
@@ -508,9 +510,20 @@
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
 
+        function updateCameraZoom() {
+            if (isMobile) {
+                // Zoom out further in portrait mode ("skinny") to show more horizontal area
+                camera.zoom = window.innerHeight > window.innerWidth ? 0.6 : 0.85;
+            } else {
+                camera.zoom = 1.5;
+            }
+        }
+        updateCameraZoom(); // Set initial zoom
+
         window.addEventListener('resize', () => {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+            updateCameraZoom();
         });
 
         // Input Handling
@@ -3026,7 +3039,6 @@
         }
 
         // --- Mobile Controls Initialization & Logic ---
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         const mobileControlsContainer = document.getElementById('mobile-controls');
         if (isMobile && mobileControlsContainer) {
             mobileControlsContainer.classList.remove('hidden');

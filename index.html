@@ -2972,19 +2972,6 @@
                 grid.draw(ctx, view);
             }
 
-        // Draw Arena Boundary Wall
-        ctx.save();
-        const hue = (level * 60) % 360;
-        ctx.strokeStyle = `hsla(${hue}, 100%, 50%, 0.6)`;
-        ctx.lineWidth = 12;
-        ctx.shadowBlur = 20;
-        ctx.shadowColor = `hsla(${hue}, 100%, 50%, 0.8)`;
-        ctx.strokeRect(0, 0, world.width, world.height);
-        ctx.strokeStyle = `hsla(${hue}, 100%, 80%, 0.9)`;
-        ctx.lineWidth = 4;
-        ctx.strokeRect(0, 0, world.width, world.height);
-        ctx.restore();
-
             // Draw Bomb Effect
             if (bombEffect.active) {
                 ctx.save();

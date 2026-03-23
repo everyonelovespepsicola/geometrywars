@@ -211,7 +211,7 @@
     <div id="ui-layer" class="hidden">
         <div class="hud-text">SCORE: <span id="scoreEl">0</span></div>
         <div class="hud-text" style="color: #ffff00;">HIGH: <span id="highScoreEl">0</span></div>
-        <div class="hud-text" style="color: #ff0055;">LIVES: <span id="livesEl">3</span></div>
+        <div class="hud-text" style="color: #ff0055;">LIVES: <span id="livesEl">5</span></div>
         <div class="hud-text" style="color: #00ffaa;">LEVEL: <span id="levelEl">1</span></div>
         <div class="hud-text" style="color: #ffaa00;">BOMBS: <span id="bombsEl">3</span></div>
         <div class="hud-text" style="color: #ffffff;">BOOST: <span id="boostEl">0</span></div>
@@ -473,7 +473,7 @@
         let score = 0;
         let scoreStreak = 0;
         let highScore = localStorage.getItem('geoWarsHighScore') || 0;
-        let lives = 3; 
+        let lives = 5; 
         let bombs = 3;
         let gameActive = false;
         let isPaused = false;
@@ -2348,7 +2348,7 @@
         function resetGame() {
             score = 0;
             scoreStreak = 0;
-            lives = 3;
+            lives = 5;
             nextLifeThreshold = 15000;
             bombs = 3;
             nextBombThreshold = 30000;

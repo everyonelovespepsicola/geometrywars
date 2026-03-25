@@ -13,7 +13,7 @@ A fast-paced, neon-infused arcade twin-stick shooter built with HTML5 Canvas and
 - **Classic Twin-Stick Action:** Smooth and responsive movement and aiming mechanics.
 - **Dynamic Grid:** A reactive background grid that warps and distorts from explosions and gravity wells.
 - **Varied Enemy Types:** Fight against grunts, weavers, spinners, gravity wells, snake-like enemies, and more, each with unique behaviors and attack patterns.
-- **Boss Fights:** Challenging multi-phase bosses (Sapphire, Ruby, Emerald) spawn every 3 levels.
+- **Boss Fights:** Challenging multi-phase bosses (Sapphire, Ruby Red, Centipede) spawn every 3 levels.
 - **Power-ups & Progression:** Build your score streak for weapon spread and fire rate upgrades. Earn extra lives (every 15,000 pts) and bombs (every 30,000 pts).
 - **Gamepad Support:** Full controller support for an authentic arcade experience.
 - **Mobile Touch Controls:** Virtual twin-stick overlays and responsive camera zoom for seamless gameplay on smartphones and tablets.

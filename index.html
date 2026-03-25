@@ -261,6 +261,7 @@
         <div class="hud-text" style="color: #ff0055;">LIVES: <span id="livesEl">5</span></div>
         <div class="hud-text" style="color: #00ffaa;">LEVEL: <span id="levelEl">1</span></div>
         <div class="hud-text" style="color: #ffaa00;">BOMBS: <span id="bombsEl">3</span></div>
+        <div class="hud-text" style="color: #ff00ff;">GUN: <span id="gunEl">1</span></div>
         <div class="hud-text" style="color: #ffffff;">BOOST: <span id="boostEl">0</span></div>
     </div>
 
@@ -348,6 +349,7 @@
             <label for="show-lines-check">Show Enemy Lines</label>
         </div>
         <button id="skip-level-btn">Skip Level</button>
+        <button id="test-room-btn" style="color: #ffaa00;">Test Room</button>
     </div>
 
     <canvas id="gameCanvas" class="blurred-bg"></canvas>
@@ -549,6 +551,7 @@
         const levelEl = document.getElementById('levelEl');
         const startScreen = document.getElementById('start-screen');
         const bombsEl = document.getElementById('bombsEl');
+        const gunEl = document.getElementById('gunEl');
         const boostEl = document.getElementById('boostEl');
         const startBtn = document.getElementById('start-btn');
         const mainMenu = document.getElementById('main-menu');
@@ -570,6 +573,7 @@
         const infiniteLivesCheck = document.getElementById('infinite-lives-check');
         const showLinesCheck = document.getElementById('show-lines-check');
         const skipLevelBtn = document.getElementById('skip-level-btn');
+        const testRoomBtn = document.getElementById('test-room-btn');
         const fpsCounterEl = document.getElementById('fps-counter');
         const enemiesAliveCounterEl = document.getElementById('enemies-alive-counter');
         const waveMsg = document.getElementById('wave-msg');
@@ -595,7 +599,7 @@
         let levelTransitioning = false;
         let bossSpawned = false;
         let currentBossType = null;
-        let bossEncounterCounts = { sapphire: 0, ruby: 0, emerald: 0, mothership: 0 };
+        let bossEncounterCounts = { sapphire: 0, 'ruby-red': 0, centipede: 0, mothership: 0 };
         let debugInvincible = false;
         let infiniteLives = false;
         let debugShowLines = false;
@@ -612,7 +616,36 @@
         let orbs = [];
         let projectilePool;
         let particlePool;
+        let explosionPool;
+        let explosions = [];
         let grid;
+        let gridDestructionTimeout = null;
+
+        let isTestRoom = false;
+        let testRoomIndex = 0;
+        const testRoomWaves = [
+            { type: 'grunt', count: 10 },
+            { type: 'rocket', count: 20 },
+            { type: 'weaver', count: 10 },
+            { type: 'spinner', count: 10 },
+            { type: 'repulsor', count: 10 },
+            { type: 'gravity-well', count: 3 },
+            { type: 'super-gravity-well', count: 3 },
+            { type: 'dog-bone-bomb', count: 5 },
+            { type: 'mayfly', count: 15 },
+            { type: 'snake-head', count: 2 },
+            { type: 'hex-dodger', count: 5 },
+            { type: 'sapphire', count: 1 },
+            { type: 'ruby-red', count: 3 },
+            { type: 'centipede', count: 1 },
+            { type: 'mothership', count: 1 },
+            { type: 'mothership-mini', count: 3 },
+            { type: 'heat-seeker', count: 5 },
+            { type: 'arrow', count: 10 },
+            { type: 'dart', count: 10 },
+            { type: 'proton', count: 10 },
+            { type: 'rocket', count: 10 }
+        ];
 
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (navigator.maxTouchPoints && navigator.maxTouchPoints > 2);
         const isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
@@ -675,11 +708,11 @@
             const key = e.key.toLowerCase();
             if (keys.hasOwnProperty(key)) keys[key] = true;
 
-            if (key === 'escape') {
+            if (key === 'escape' && !e.repeat) {
                 togglePause();
             }
 
-            if (key === 'f') {
+            if (key === 'f' && !e.repeat) {
                 if (!document.fullscreenElement) {
                     document.documentElement.requestFullscreen().catch(err => {});
                 } else {
@@ -766,6 +799,24 @@
             }
         });
 
+        testRoomBtn.addEventListener('click', () => {
+            if (gameActive) {
+                isTestRoom = true;
+                testRoomIndex = 0;
+                levelTransitioning = false;
+                
+                // Clear current board
+                enemies.forEach(e => e.markedForDeletion = true);
+                projectiles.forEach(p => p.markedForDeletion = true);
+                miniBombEffects = [];
+                bombEffect.active = false;
+                clearTimeout(gridDestructionTimeout);
+                if (!grid) grid = new Grid(world.width, world.height, 50);
+                
+                togglePause(); // Unpause the game
+            }
+        });
+
         // --- CLASSES ---
 
         class Point {
@@ -814,6 +865,7 @@
                 const maxCol = Math.min(this.cols - 1, Math.ceil((x + radius) / this.spacing));
                 const minRow = Math.max(0, Math.floor((y - radius) / this.spacing));
                 const maxRow = Math.min(this.rows - 1, Math.ceil((y + radius) / this.spacing));
+                const radiusSq = radius * radius;
 
                 for (let r = minRow; r <= maxRow; r++) {
                     for (let c = minCol; c <= maxCol; c++) {
@@ -821,12 +873,13 @@
                         const dx = p.x - x;
                         const dy = p.y - y;
                         const distSq = dx * dx + dy * dy;
-                        if (distSq < radius * radius) {
+                        if (distSq < radiusSq) {
                             const dist = Math.sqrt(distSq);
-                            const f = (1 - dist / radius) * force;
-                            const angle = Math.atan2(dy, dx);
-                            p.velX += Math.cos(angle) * f;
-                            p.velY += Math.sin(angle) * f;
+                            if (dist > 0.01) {
+                                const f = (1 - dist / radius) * force;
+                                p.velX += (dx / dist) * f;
+                                p.velY += (dy / dist) * f;
+                            }
                         }
                     }
                 }
@@ -1039,7 +1092,7 @@
                     this.aimAngle = Math.atan2(virtualSticks.right.deltaY, virtualSticks.right.deltaX);
                     inputMode = 'touch';
                     
-                    this.shootCooldownMs = (scoreStreak >= 20000) ? 20 : 80;
+                    this.shootCooldownMs = (scoreStreak >= 20000 && scoreStreak < 45000) ? 20 : 80;
                     if (now > this.lastShotTime + this.shootCooldownMs) {
                         this.shoot(now);
                     }
@@ -1074,7 +1127,7 @@
                             inputMode = 'gamepad';
                             
                             // Power-ups modify cooldown
-                            this.shootCooldownMs = (scoreStreak >= 20000) ? 20 : 80;
+                            this.shootCooldownMs = (scoreStreak >= 20000 && scoreStreak < 45000) ? 20 : 80;
 
                             // Twin-stick auto-fire
                             if (now > this.lastShotTime + this.shootCooldownMs) {
@@ -1099,7 +1152,7 @@
                     this.aimAngle = Math.atan2(mouse.y - this.y, mouse.x - this.x);
                     if (mouse.down) {
                         // Power-ups modify cooldown
-                        this.shootCooldownMs = (scoreStreak >= 20000) ? 20 : 80;
+                        this.shootCooldownMs = (scoreStreak >= 20000 && scoreStreak < 45000) ? 20 : 80;
                         if (now > this.lastShotTime + this.shootCooldownMs) {
                             this.shoot(now);
                         }
@@ -1137,7 +1190,10 @@
             shoot(now) {
                 this.lastShotTime = now;
                 sounds.shoot();
-                const isSpread = scoreStreak >= 10000 && scoreStreak < 20000;
+                
+                const gunLevel = (scoreStreak >= 45000) ? 4 : (scoreStreak >= 20000) ? 3 : (scoreStreak >= 10000) ? 2 : 1;
+                const isSpread = gunLevel === 2 || gunLevel === 4;
+                const isMissile = gunLevel === 4;
 
                 const velocity = {
                     x: Math.cos(this.aimAngle) * 14.4,
@@ -1146,7 +1202,8 @@
                 projectiles.push(projectilePool.get().init(
                     this.x + Math.cos(this.aimAngle) * 20, 
                     this.y + Math.sin(this.aimAngle) * 20, 
-                    velocity
+                    velocity,
+                    isMissile
                 ));
 
                 if (isSpread) {
@@ -1157,7 +1214,8 @@
                         projectiles.push(projectilePool.get().init(
                             this.x + Math.cos(angle) * 20, 
                             this.y + Math.sin(angle) * 20, 
-                            vel
+                            vel,
+                            isMissile
                         ));
                     });
                 }
@@ -1188,13 +1246,17 @@
                 this.radius = 3;
                 this.color = '#ffff00';
                 this.markedForDeletion = false;
+                this.isMissile = false;
             }
 
-            init(x, y, velocity) {
+            init(x, y, velocity, isMissile = false) {
                 this.x = x;
                 this.y = y;
                 this.velocity = velocity;
                 this.markedForDeletion = false;
+                this.isMissile = isMissile;
+                this.radius = isMissile ? 8 : 3;
+                this.color = '#ffff00'; // Yellow projectiles
                 return this; // for chaining
             }
 
@@ -1204,15 +1266,231 @@
                     this.y + this.radius < view.y - view.buffer || this.y - this.radius > view.y + view.height + view.buffer) {
                     return;
                 }
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2, false);
-                ctx.fill();
+                
+                const cacheKey = this.isMissile ? 'projectile-missile' : 'projectile-bullet';
+                const cached = (typeof renderCache !== 'undefined') ? renderCache[cacheKey] : undefined;
+                
+                if (cached) {
+                    ctx.drawImage(cached.canvas, this.x - cached.offset, this.y - cached.offset);
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2, false);
+                    ctx.fillStyle = this.color;
+                    ctx.fill();
+                    if (this.isMissile) {
+                        ctx.strokeStyle = '#FF0000';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    }
+                }
             }
 
             update(dt) {
                 this.x += this.velocity.x * 60 * dt;
                 this.y += this.velocity.y * 60 * dt;
+                if (grid) {
+                    if (this.isMissile) {
+                        grid.applyForce(this.x, this.y, 100, 0.8); // Jiggle the grid heavily as it flies
+                    } else {
+                        grid.applyForce(this.x, this.y, 50, 0.4); // Lighter jiggle for standard bullets
+                    }
+                }
             }
+        }
+
+        // --- OFF-SCREEN RENDERING CACHE ---
+        // NOTE: To optimize performance for future additions, add static shapes to this Off-Screen Rendering Cache instead of drawing them via vector paths in the main loop.
+        const renderCache = {};
+        function buildRenderCache() {
+            const typesToCache = [
+                // Projectiles
+                { type: 'projectile-bullet', radius: 3, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fillStyle = '#ffff00'; ctx.fill();
+                }},
+                { type: 'projectile-missile', radius: 8, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fillStyle = '#ffff00'; ctx.fill();
+                    ctx.strokeStyle = '#FF0000'; ctx.lineWidth = 2; ctx.stroke();
+                }},
+                // Standard Enemies
+                { type: 'grunt', radius: 22.5, draw: (ctx, r) => {
+                    const size = r * 0.7; ctx.beginPath(); ctx.rect(-size, -size, size * 2, size * 2); ctx.strokeStyle = '#00aaff'; ctx.lineWidth = 2; ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(-size/2, -size/2); ctx.lineTo(size/2, size/2); ctx.moveTo(size/2, -size/2); ctx.lineTo(-size/2, size/2); ctx.stroke();
+                }},
+                { type: 'weaver', radius: 22.5, draw: (ctx, r) => {
+                    const size = r * 0.7; ctx.beginPath(); ctx.rect(-size, -size, size * 2, size * 2); ctx.strokeStyle = '#00ff00'; ctx.lineWidth = 2; ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(-size/2, -size/2); ctx.lineTo(size/2, size/2); ctx.moveTo(size/2, -size/2); ctx.lineTo(-size/2, size/2); ctx.stroke();
+                }},
+                { type: 'spinner', radius: 22.5, draw: (ctx, r) => {
+                    for (let i = 0; i < 3; i++) {
+                        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(r, -r / 2.5); ctx.lineTo(r, r / 2.5); ctx.closePath();
+                        ctx.fillStyle = '#aa00ff'; ctx.fill(); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke(); ctx.rotate((Math.PI * 2) / 3);
+                    }
+                }},
+                { type: 'spinner-mini', radius: 8, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fillStyle = '#d040ff'; ctx.fill();
+                }},
+                { type: 'snake-head', radius: 15, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.fillStyle='#dfff00'; ctx.fill();
+                }},
+                { type: 'snake-body', radius: 12, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.fillStyle='#9acd32'; ctx.fill();
+                }},
+                { type: 'repulsor', radius: 22.5, draw: (ctx, r) => {
+                    const spikes = 8; const outerRadius = r * 1.2; const innerRadius = r * 0.6;
+                    ctx.beginPath();
+                    for(let i=0; i<spikes*2; i++){
+                        const rad = i%2===0 ? outerRadius : innerRadius;
+                        const angle = (i*Math.PI)/spikes;
+                        if(i===0) ctx.moveTo(rad*Math.cos(angle), rad*Math.sin(angle));
+                        else ctx.lineTo(rad*Math.cos(angle), rad*Math.sin(angle));
+                    }
+                    ctx.closePath(); ctx.fillStyle='#ff8c00'; ctx.fill();
+                }},
+                { type: 'hex-dodger-base', radius: 22.5, draw: (ctx, r) => {
+                    ctx.beginPath();
+                    for(let i=0; i<6; i++) {
+                        const angle = i*Math.PI/3;
+                        if(i===0) ctx.moveTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                        else ctx.lineTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                    }
+                    ctx.closePath(); ctx.strokeStyle='#008080'; ctx.lineWidth=3; ctx.stroke();
+                }},
+                { type: 'proton', radius: 12, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.fillStyle='#ffaa00'; ctx.fill();
+                }},
+                { type: 'mayfly', radius: 20, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.moveTo(r, 0); ctx.lineTo(r*Math.cos(2*Math.PI/3), r*Math.sin(2*Math.PI/3));
+                    ctx.lineTo(r*Math.cos(4*Math.PI/3), r*Math.sin(4*Math.PI/3)); ctx.closePath();
+                    ctx.strokeStyle='#ff00ff'; ctx.lineWidth=2; ctx.stroke();
+                }},
+                { type: 'dart', radius: 16, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.moveTo(r,0); ctx.lineTo(-r,r/2); ctx.lineTo(-r,-r/2); ctx.closePath();
+                    ctx.fillStyle='#ffffff'; ctx.fill();
+                }},
+                { type: 'hex-yoyo', radius: 9, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fillStyle='#008080'; ctx.fill();
+                }},
+                { type: 'arrow-green', radius: 12, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.moveTo(r,0); ctx.lineTo(-r,r/2); ctx.lineTo(-r,-r/2); ctx.closePath();
+                    ctx.fillStyle='#90ee90'; ctx.fill();
+                }},
+                { type: 'arrow-yellow', radius: 12, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.moveTo(r,0); ctx.lineTo(-r,r/2); ctx.lineTo(-r,-r/2); ctx.closePath();
+                    ctx.fillStyle='#ffff00'; ctx.fill();
+                }},
+                { type: 'heat-seeker-base', radius: 18, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.moveTo(r,0); ctx.lineTo(-r,r*0.6); ctx.lineTo(-r*0.5,0); ctx.lineTo(-r,-r*0.6); ctx.closePath();
+                    ctx.fillStyle='#ff4500'; ctx.fill();
+                }},
+                { type: 'rocket', radius: 18, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.moveTo(r, 0); ctx.lineTo(-r, r * 0.5); ctx.lineTo(-r * 0.5, 0); ctx.lineTo(-r, -r * 0.5); ctx.closePath();
+                    ctx.fillStyle = '#ff0055'; ctx.fill();
+                    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.stroke();
+                }},
+                // Bosses & Turrets
+                { type: 'sapphire', radius: 40, draw: (ctx, r) => {
+                    ctx.beginPath();
+                    for(let i=0; i<8; i++){
+                        const angle = i*Math.PI/4;
+                        if(i===0) ctx.moveTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                        else ctx.lineTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                    }
+                    ctx.closePath(); ctx.strokeStyle='#0f52ba'; ctx.lineWidth=4; ctx.stroke();
+                }},
+                { type: 'ruby-red', radius: 45, draw: (ctx, r) => {
+                    ctx.beginPath();
+                    for(let i=0; i<6; i++){
+                        const angle = i*Math.PI/3;
+                        if(i===0) ctx.moveTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                        else ctx.lineTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                    }
+                    ctx.closePath(); ctx.fillStyle='#8b0000'; ctx.fill();
+                    ctx.strokeStyle='#ff3333'; ctx.lineWidth=4; ctx.stroke();
+                }},
+                { type: 'centipede-head', radius: 20, offsetOverride: 35, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fillStyle='rgba(80, 200, 120, 0.2)'; ctx.fill();
+                    ctx.strokeStyle='#50c878'; ctx.lineWidth=3; ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(r*0.5, -r*0.6); ctx.lineTo(r*1.5, -r*0.8); ctx.moveTo(r*0.5, r*0.6); ctx.lineTo(r*1.5, r*0.8);
+                    ctx.strokeStyle='#fff'; ctx.lineWidth=3; ctx.stroke();
+                    ctx.fillStyle='#f00'; ctx.beginPath(); ctx.arc(r*0.4, -r*0.3, 4, 0, Math.PI*2); ctx.arc(r*0.4, r*0.3, 4, 0, Math.PI*2); ctx.fill();
+                }},
+                { type: 'centipede-body', radius: 20, offsetOverride: 35, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fillStyle='rgba(80, 200, 120, 0.2)'; ctx.fill();
+                    ctx.strokeStyle='#50c878'; ctx.lineWidth=3; ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(0, -r*0.8); ctx.lineTo(-r*0.5, -r*1.5); ctx.moveTo(0, r*0.8); ctx.lineTo(-r*0.5, r*1.5);
+                    ctx.strokeStyle='#50c878'; ctx.lineWidth=2; ctx.stroke();
+                }},
+                { type: 'mothership-base-purple', radius: 150, draw: (ctx, r) => {
+                    ctx.beginPath();
+                    for(let i=0; i<8; i++){
+                        const angle = i*Math.PI/4; 
+                        if(i===0) ctx.moveTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                        else ctx.lineTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                    }
+                    ctx.closePath(); ctx.strokeStyle='#800080'; ctx.lineWidth=6; ctx.stroke();
+                }},
+                { type: 'mothership-base-purple-shielded', radius: 150, offsetOverride: 185, draw: (ctx, r) => {
+                    ctx.beginPath();
+                    for(let i=0; i<8; i++){
+                        const angle = i*Math.PI/4; 
+                        if(i===0) ctx.moveTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                        else ctx.lineTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                    }
+                    ctx.closePath(); ctx.fillStyle='#800080'; ctx.fill(); ctx.strokeStyle='#800080'; ctx.lineWidth=6; ctx.stroke();
+                    ctx.beginPath(); ctx.arc(0, 0, r + 25, 0, Math.PI * 2);
+                    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.setLineDash([10, 10]); ctx.stroke(); ctx.setLineDash([]);
+                }},
+                { type: 'mothership-base-yellow', radius: 150, draw: (ctx, r) => {
+                    ctx.beginPath();
+                    for(let i=0; i<8; i++){
+                        const angle = i*Math.PI/4;
+                        if(i===0) ctx.moveTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                        else ctx.lineTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                    }
+                    ctx.closePath(); ctx.strokeStyle='#ffff00'; ctx.lineWidth=6; ctx.stroke();
+                }},
+                { type: 'mothership-mini', radius: 50, draw: (ctx, r) => {
+                    ctx.beginPath();
+                    for(let i=0; i<8; i++){
+                        const angle = i*Math.PI/4;
+                        if(i===0) ctx.moveTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                        else ctx.lineTo(Math.cos(angle)*r, Math.sin(angle)*r);
+                    }
+                    ctx.closePath(); ctx.strokeStyle='#ffffff'; ctx.lineWidth=4; ctx.stroke();
+                }},
+                { type: 'mothership-turret', radius: 20, draw: (ctx, r) => {
+                    const size = r*0.8; ctx.beginPath(); ctx.rect(-size, -size, size*2, size*2);
+                    ctx.strokeStyle='#ffff00'; ctx.lineWidth=3; ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(-size,-size); ctx.lineTo(size,size); ctx.moveTo(size,-size); ctx.lineTo(-size,size); ctx.stroke();
+                }},
+                { type: 'mothership-final-turret', radius: 40, draw: (ctx, r) => {
+                    const size = r*0.8; ctx.beginPath(); ctx.rect(-size, -size, size*2, size*2);
+                    ctx.strokeStyle='#ffff00'; ctx.lineWidth=5; ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(-size,-size); ctx.lineTo(size,size); ctx.moveTo(size,-size); ctx.lineTo(-size,size); ctx.stroke();
+                    ctx.fillStyle='rgba(255, 255, 0, 0.2)'; ctx.fill();
+                }},
+                { type: 'mini-titan', radius: 25, draw: (ctx, r) => {
+                    ctx.beginPath(); ctx.rect(-r, -r, r*2, r*2); ctx.strokeStyle='#ff69b4'; ctx.lineWidth=3; ctx.stroke();
+                }}
+            ];
+
+            typesToCache.forEach(t => {
+                const canvas = document.createElement('canvas');
+                const padding = 10; // Extra space to ensure thick lines aren't cut off
+                const offset = t.offsetOverride || (t.radius + padding);
+                
+                canvas.width = offset * 2;
+                canvas.height = offset * 2;
+                
+                const ctx = canvas.getContext('2d');
+                // Move the origin to the center of our offscreen canvas
+                ctx.translate(offset, offset); 
+                
+                // Draw the vector art once
+                t.draw(ctx, t.radius);
+                
+                renderCache[t.type] = { canvas: canvas, offset: offset };
+            });
         }
 
         class Enemy {
@@ -1254,6 +1532,7 @@
                         this.color = '#ff0000'; // Red
                         this.speed = 1.2;
                         this.hp = 10;
+                        this.maxHp = 10;
                         const gwAngle = Math.random() * Math.PI * 2;
                         this.velocity = { x: Math.cos(gwAngle), y: Math.sin(gwAngle) };
                         break;
@@ -1262,19 +1541,46 @@
                         this.color = '#ffffff';
                         this.speed = 0.8;
                         this.hp = 20; // Destroyable by shooting
+                        this.maxHp = 20;
                         const sgwAngle = Math.random() * Math.PI * 2;
                         this.velocity = { x: Math.cos(sgwAngle), y: Math.sin(sgwAngle) };
+                        break;
+                    case 'black-hole':
+                        this.radius = 80;
+                        this.color = '#000000'; // Void
+                        this.hp = Infinity;
+                        this.maxHp = Infinity;
+                        this.speed = 0;
+                        this.lifeTime = 4.0; // Black hole lasts 4 seconds
+                        this.spinSpeed = 0;
                         break;
                     case 'proton':
                         this.radius = 12;
                         this.color = '#ffaa00'; // Orange
                         this.speed = 6;
                         break;
+                    case 'rocket':
+                        this.radius = 18;
+                        this.color = '#ff0055'; // Pinkish red
+                        this.speed = 8.0; // Fast
+                        this.hp = 3;
+                        this.maxHp = 3;
+                        this.spinSpeed = 0; // Prevent visual spinning
+                        this.trail = []; // Tracer effect
+                        const pAxis = Math.random() < 0.5 ? 'x' : 'y';
+                        const pDir = Math.random() < 0.5 ? 1 : -1;
+                        if (pAxis === 'x') {
+                            this.velocity = { x: pDir, y: 0 };
+                        } else {
+                            this.velocity = { x: 0, y: pDir };
+                        }
+                        this.angle = Math.atan2(this.velocity.y, this.velocity.x);
+                        break;
                     case 'dog-bone-bomb':
-                        this.radius = 30; // Larger trigger zone
+                        this.radius = 60; // Expand bounding box to cover the entire length
                         this.color = '#ffaa00'; // Orange
                         this.speed = 0.5 + Math.random() * 0.5; // Wander a little
-                        this.hp = Infinity; // Destroyed by collision trigger, not shooting
+                        this.hp = Infinity; // Invulnerable to shots
                         const dbbAngle = Math.random() * Math.PI * 2;
                         this.velocity = { x: Math.cos(dbbAngle), y: Math.sin(dbbAngle) };
                         this.spinSpeed = (Math.random() - 0.5) * 0.02; // Slower lazy spin
@@ -1290,6 +1596,7 @@
                         this.speed = 4.2;
                         this.segments = [];
                         this.hp = 10; // Increased HP to match Gravity Well
+                        this.maxHp = 10;
                         break;
                     case 'snake-body':
                         this.radius = 12; // 33% smaller
@@ -1306,6 +1613,7 @@
                         this.color = '#008080'; // Teal
                         this.speed = 3.6;
                         this.hp = 10;
+                        this.maxHp = 10;
                         this.angry = false;
                         break;
                     case 'sapphire':
@@ -1326,22 +1634,23 @@
                         this.speed = 0; // Handled parametrically
                         this.hp = 1; // Killable
                         break;
-                    case 'ruby':
+                    case 'ruby-red':
                         this.radius = 45;
-                        this.color = '#e0115f'; // Ruby Red
-                        this.hp = 80;
-                        this.maxHp = 80;
+                        this.color = '#8b0000'; // Dark Red
+                        this.hp = 60;
+                        this.maxHp = 60;
                         this.speed = 3.6;
                         break;
                     case 'mini-titan':
                         this.radius = 25;
                         this.color = '#ff69b4'; // Hot Pink
                         this.hp = 5;
+                        this.maxHp = 5;
                         this.speed = 1.8;
                         break;
                     case 'mothership':
                         this.radius = 150;
-                        this.color = '#ff00ff'; // Magenta
+                        this.color = '#800080'; // Solid Purple
                         this.hp = 300;
                         this.maxHp = 300;
                         this.speed = 0.5;
@@ -1349,7 +1658,7 @@
                         break;
                     case 'mothership-mini':
                         this.radius = 50;
-                        this.color = '#ff00ff'; // Magenta
+                        this.color = '#ffffff'; // White
                         this.hp = 100;
                         this.maxHp = 100;
                         this.speed = 2.0; // Faster than big mothership
@@ -1358,7 +1667,7 @@
                         break;
                     case 'mothership-turret':
                         this.radius = 20;
-                        this.color = '#ff0000'; // Red
+                        this.color = '#ffff00'; // Yellow
                         this.hp = 30;
                         this.maxHp = 30;
                         this.speed = 0;
@@ -1368,7 +1677,7 @@
                         break;
                     case 'mothership-final-turret':
                         this.radius = 40;
-                        this.color = '#ff0000'; // Red
+                        this.color = '#ffff00'; // Yellow
                         this.hp = 60;
                         this.maxHp = 60;
                         this.speed = 0;
@@ -1383,13 +1692,16 @@
                         this.maxHp = 2;
                         this.speed = 9.0; // Faster than normal arrows
                         break;
-                    case 'emerald':
-                        this.radius = 50;
+                    case 'centipede':
+                        this.radius = 20; // Centipede segment size
                         this.color = '#50c878'; // Emerald Green
-                        this.hp = 150;
-                        this.maxHp = 150;
-                        this.speed = 1.2;
-                        this.miniBossSpawned = false;
+                        this.hp = 45; // HP per segment
+                        this.maxHp = 45;
+                        this.speed = 2.5; // Base speed
+                        this.isHead = false;
+                        this.leader = null;
+                        this.follower = null;
+                        this.spinSpeed = 0; // Angle determined by movement direction
                         break;
                     case 'arrow':
                         this.radius = 12;
@@ -1417,16 +1729,79 @@
                     return;
                 }
 
+                if (this.type === 'rocket' && this.trail && this.trail.length > 1) {
+                    ctx.save();
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    
+                    // Outer glow
+                    ctx.beginPath();
+                    ctx.moveTo(this.trail[0].x, this.trail[0].y);
+                    for (let i = 1; i < this.trail.length; i++) {
+                        ctx.lineTo(this.trail[i].x, this.trail[i].y);
+                    }
+                    ctx.strokeStyle = 'rgba(255, 0, 85, 0.5)';
+                    ctx.lineWidth = this.radius * 0.8;
+                    ctx.stroke();
+                    
+                    // Inner hot core
+                    ctx.beginPath();
+                    ctx.moveTo(this.trail[0].x, this.trail[0].y);
+                    for (let i = 1; i < this.trail.length; i++) {
+                        ctx.lineTo(this.trail[i].x, this.trail[i].y);
+                    }
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                    ctx.lineWidth = this.radius * 0.3;
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
                 ctx.save();
                 ctx.translate(this.x, this.y);
                 ctx.rotate(this.angle);
                 
                 // Optimization: Only apply shadowBlur to bosses
-                if (['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini'].includes(this.type)) {
+                if (['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini'].includes(this.type)) {
                     ctx.shadowBlur = 10;
                     ctx.shadowColor = this.color;
                 }
                 
+                // Check if this enemy type has a pre-rendered cached image
+                let cacheKey = this.type;
+                if (this.type === 'centipede') {
+                    cacheKey = this.isHead ? 'centipede-head' : 'centipede-body';
+                } else if (this.type === 'hex-dodger') {
+                    cacheKey = 'hex-dodger-base';
+                } else if (this.type === 'mothership') {
+                    if (this.color === '#ffff00') {
+                        cacheKey = 'mothership-base-yellow';
+                    } else {
+                        const isInvulnerable = this.turrets && this.turrets.some(t => !t.markedForDeletion);
+                        cacheKey = isInvulnerable ? 'mothership-base-purple-shielded' : 'mothership-base-purple';
+                    }
+                } else if (this.type === 'heat-seeker') {
+                    cacheKey = 'heat-seeker-base';
+                } else if (this.type === 'arrow') {
+                    cacheKey = this.color === '#ffff00' ? 'arrow-yellow' : 'arrow-green';
+                }
+
+                // Fallback handles undefined renderCache gracefully just in case
+                const cached = (typeof renderCache !== 'undefined') ? renderCache[cacheKey] : undefined;
+                if (cached) {
+                    ctx.drawImage(cached.canvas, -cached.offset, -cached.offset);
+                    
+                    // Draw dynamic overlays on top of the cached base
+                    if (this.type === 'hex-dodger' && !this.yoyoOut) {
+                        ctx.beginPath(); ctx.arc(0, 0, this.radius * 0.4, 0, Math.PI * 2); ctx.fillStyle = this.color; ctx.fill();
+                    } else if (this.type === 'heat-seeker') {
+                        ctx.beginPath(); ctx.moveTo(-this.radius * 0.5, 0); ctx.lineTo(-this.radius * 1.5, (Math.random() - 0.5) * 5);
+                        ctx.strokeStyle = '#ffff00'; ctx.lineWidth = 2; ctx.stroke();
+                    }
+
+                    ctx.restore();
+                    return; // Skip all the complex vector drawing below!
+                }
+
                 ctx.beginPath();
 
                 if (this.type === 'gravity-well') {
@@ -1451,31 +1826,65 @@
                     ctx.strokeStyle = '#ff0000';
                     ctx.lineWidth = 3;
                     ctx.stroke();
-                } else if (this.type === 'dog-bone-bomb') {
-                    const boneLength = 60; // Overall 120 pixels long
+                } else if (this.type === 'black-hole') {
+                    ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                    ctx.fillStyle = '#000';
+                    ctx.fill();
+                    ctx.strokeStyle = '#aa00ff';
+                    ctx.lineWidth = 10 + Math.sin(frame * 0.5) * 10;
+                    ctx.stroke();
+                    // Intense inner pulse
                     ctx.beginPath();
-                    ctx.moveTo(-boneLength + 8, 0);
-                    ctx.lineTo(boneLength - 8, 0);
-                    ctx.strokeStyle = '#ffffff'; // White bar
+                    ctx.arc(0, 0, this.radius * 0.4 + Math.random() * 30, 0, Math.PI * 2);
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                } else if (this.type === 'dog-bone-bomb') {
+                    const boneLength = 52; 
+                    
+                    // Door Threshold Highlight
+                    const pulseAlpha = 0.2 + Math.abs(Math.sin(frame * 0.1)) * 0.5;
+                    
+                    // Soft glowing background for the door gap
+                    ctx.fillStyle = `rgba(255, 170, 0, ${pulseAlpha * 0.5})`;
+                    ctx.fillRect(-45, -12, 90, 24);
+
+                    // Dashed lines indicating the "entry vectors"
+                    ctx.beginPath();
+                    ctx.moveTo(-45, 12);
+                    ctx.lineTo(45, 12);
+                    ctx.moveTo(-45, -12);
+                    ctx.lineTo(45, -12);
+                    ctx.strokeStyle = `rgba(255, 170, 0, ${pulseAlpha})`;
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 5]);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    
+                    // The solid core bar
+                    ctx.beginPath();
+                    ctx.moveTo(-boneLength, 0);
+                    ctx.lineTo(boneLength, 0);
+                    ctx.strokeStyle = '#ffffff'; 
                     ctx.lineWidth = 4;
                     ctx.stroke();
 
-                    // Center trigger zone indicator
+                    // The red-ringed lethal balls
                     ctx.beginPath();
-                    ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
-                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                    ctx.arc(-boneLength, 0, 10, 0, Math.PI * 2);
+                    ctx.fillStyle = this.color;
+                    ctx.fill();
+                    ctx.strokeStyle = '#ff0000'; // Red warning outline
                     ctx.lineWidth = 2;
                     ctx.stroke();
 
                     ctx.beginPath();
-                    ctx.arc(-boneLength + 8, 0, 8, 0, Math.PI * 2);
+                    ctx.arc(boneLength, 0, 10, 0, Math.PI * 2);
                     ctx.fillStyle = this.color;
                     ctx.fill();
-
-                    ctx.beginPath();
-                    ctx.arc(boneLength - 8, 0, 8, 0, Math.PI * 2);
-                    ctx.fillStyle = this.color;
-                    ctx.fill();
+                    ctx.strokeStyle = '#ff0000'; // Red warning outline
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
                 } else if (this.type.startsWith('snake')) {
                     ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
                     ctx.fillStyle = this.color;
@@ -1488,7 +1897,8 @@
                     for (let i = 0; i < spikes * 2; i++) {
                         const radius = i % 2 === 0 ? outerRadius : innerRadius;
                         const angle = (i * Math.PI) / spikes;
-                        ctx.lineTo(radius * Math.cos(angle), radius * Math.sin(angle));
+                        if(i===0) ctx.moveTo(radius * Math.cos(angle), radius * Math.sin(angle));
+                        else ctx.lineTo(radius * Math.cos(angle), radius * Math.sin(angle));
                     }
                     ctx.closePath();
                     ctx.fillStyle = this.color;
@@ -1539,7 +1949,7 @@
                     ctx.strokeStyle = this.color;
                     ctx.lineWidth = 4;
                     ctx.stroke();
-                } else if (this.type === 'ruby') {
+                } else if (this.type === 'ruby-red') {
                     // Hexagon
                     ctx.beginPath();
                     for (let i = 0; i < 6; i++) {
@@ -1550,19 +1960,9 @@
                         else ctx.lineTo(x, y);
                     }
                     ctx.closePath();
-                    ctx.strokeStyle = this.color;
-                    ctx.lineWidth = 4;
-                    ctx.stroke();
-                } else if (this.type === 'emerald') {
-                    // Star
-                    ctx.beginPath();
-                    for (let i = 0; i < 10; i++) {
-                        const r = i % 2 === 0 ? this.radius : this.radius / 2;
-                        const angle = i * Math.PI / 5;
-                        ctx.lineTo(Math.cos(angle) * r, Math.sin(angle) * r);
-                    }
-                    ctx.closePath();
-                    ctx.strokeStyle = this.color;
+                    ctx.fillStyle = this.color;
+                    ctx.fill();
+                    ctx.strokeStyle = '#ff3333';
                     ctx.lineWidth = 4;
                     ctx.stroke();
                 } else if (this.type === 'mothership' || this.type === 'mothership-mini') {
@@ -1575,12 +1975,23 @@
                     }
                     ctx.closePath();
                     const isInvulnerable = this.type === 'mothership' && this.turrets && this.turrets.some(t => !t.markedForDeletion);
-                    ctx.strokeStyle = isInvulnerable ? '#aaaaaa' : this.color;
+                    ctx.strokeStyle = this.color;
                     ctx.lineWidth = this.type === 'mothership' ? 6 : 4;
+                    if (this.type === 'mothership' && isInvulnerable) {
+                        ctx.fillStyle = this.color;
+                        ctx.fill();
+                    }
                     ctx.stroke();
                     if (isInvulnerable) {
-                        ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-                        ctx.fill();
+                        
+                        // Draw a protective energy shield ring
+                        ctx.beginPath();
+                        ctx.arc(0, 0, this.radius + 25, 0, Math.PI * 2);
+                        ctx.strokeStyle = '#ffffff';
+                        ctx.lineWidth = 2;
+                        ctx.setLineDash([10, 10]);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
                     }
                 } else if (this.type === 'mothership-turret') {
                     const size = this.radius * 0.8;
@@ -1607,7 +2018,7 @@
                     ctx.moveTo(size, -size);
                     ctx.lineTo(-size, size);
                     ctx.stroke();
-                    ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+                    ctx.fillStyle = 'rgba(255, 255, 0, 0.2)';
                     ctx.fill();
                 } else if (this.type === 'heat-seeker') {
                     ctx.beginPath();
@@ -1652,36 +2063,15 @@
                     ctx.closePath();
                     ctx.fillStyle = this.color;
                     ctx.fill();
-                } else if (this.type === 'spinner') {
-                    // Fan / Propeller shape
-                    for (let i = 0; i < 3; i++) {
-                        ctx.beginPath();
-                        ctx.moveTo(0, 0);
-                        ctx.lineTo(this.radius, -this.radius / 2.5);
-                        ctx.lineTo(this.radius, this.radius / 2.5);
-                        ctx.closePath();
-                        ctx.fillStyle = this.color;
-                        ctx.fill();
-                        ctx.strokeStyle = '#ffffff';
-                        ctx.lineWidth = 1.5;
-                        ctx.stroke();
-                        ctx.rotate((Math.PI * 2) / 3);
-                    }
-                } else {
-                    // Square/Diamond shape for Grunt, Weaver
-                    const size = this.radius * 0.7;
-                    ctx.rect(-size, -size, size * 2, size * 2);
-                    ctx.strokeStyle = this.color;
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
-                    
-                    // Inner X
+                } else if (this.type === 'rocket') {
                     ctx.beginPath();
-                    ctx.moveTo(-size/2, -size/2);
-                    ctx.lineTo(size/2, size/2);
-                    ctx.moveTo(size/2, -size/2);
-                    ctx.lineTo(-size/2, size/2);
-                    ctx.stroke();
+                    ctx.moveTo(this.radius, 0);
+                    ctx.lineTo(-this.radius, this.radius * 0.5);
+                    ctx.lineTo(-this.radius * 0.5, 0);
+                    ctx.lineTo(-this.radius, -this.radius * 0.5);
+                    ctx.closePath();
+                    ctx.fillStyle = this.color;
+                    ctx.fill();
                 }
 
                 ctx.restore();
@@ -1699,6 +2089,77 @@
                 const angleToPlayer = Math.atan2(player.y - this.y, player.x - this.x);
 
                 // --- BEHAVIOR LOGIC ---
+                
+                // 3-Way Whirlpool Collapse Trigger
+                if (this.type === 'gravity-well' || this.type === 'super-gravity-well') {
+                    let partners = [];
+                    enemies.forEach(other => {
+                        if (other !== this && !other.markedForDeletion && other.type === this.type) {
+                            const dist = Math.hypot(other.x - this.x, other.y - this.y);
+                            if (dist < 350) { // Limit to a tight whirlpool threshold
+                                partners.push(other);
+                            }
+                        }
+                    });
+
+                    if (partners.length >= 2) { // 3 or more wells in a tight cluster
+                        this.markedForDeletion = true;
+                        partners.forEach(p => p.markedForDeletion = true);
+                        
+                        let cx = this.x;
+                        let cy = this.y;
+                        partners.forEach(p => { cx += p.x; cy += p.y; });
+                        cx /= (partners.length + 1);
+                        cy /= (partners.length + 1); // Centroid
+
+                        if (this.type === 'gravity-well') {
+                            enemies.push(new Enemy(cx, cy, 'super-gravity-well'));
+                            sounds.superGravityWell();
+                            createSpriteExplosion(cx, cy, '#ffffff');
+                            if (grid) grid.applyForce(cx, cy, 800, -50);
+                        } else {
+                            enemies.push(new Enemy(cx, cy, 'black-hole'));
+                            sounds.superGravityWell();
+                            sounds.bomb();
+                            if (grid) grid.applyForce(cx, cy, 1000, -100); // Massive initial grid tear inward
+                        }
+                        return; // Stop updating this well instantly
+                    }
+                }
+
+                // Black Hole Mechanics
+                if (this.type === 'black-hole') {
+                    this.lifeTime -= dt;
+                    if (this.lifeTime <= 0) {
+                        this.markedForDeletion = true;
+                        if (grid) {
+                            grid.applyForce(this.x, this.y, 4000, -300); // Implode inward, sucking the entire grid
+                            gridDestructionTimeout = setTimeout(() => { grid = null; }, 250); // Destroy grid entirely after collapse
+                        }
+                        createSpriteExplosion(this.x, this.y, '#aa00ff');
+                        createSpriteExplosion(this.x, this.y, '#ffffff');
+                        sounds.bomb();
+                        return;
+                    }
+
+                    if (grid) grid.applyForce(this.x, this.y, 800, -10.0); // Continual savage grid tear
+
+                    enemies.forEach(other => {
+                        if (other !== this && !['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret'].includes(other.type)) {
+                            const distSq = (other.x - this.x)**2 + (other.y - this.y)**2;
+                            if (distSq < this.radius * this.radius) {
+                                other.markedForDeletion = true; // Instantly vaporize anything touching
+                                if (other.type === 'centipede' || other.type === 'gravity-well' || other.type === 'super-gravity-well') createSpriteExplosion(other.x, other.y, other.color);
+                                else createExplosion(other.x, other.y, other.color);
+                            } else if (distSq < 640000) { // Massive 800 pixel vacuum range
+                                const dist = Math.sqrt(distSq);
+                                other.x += (this.x - other.x) / dist * 35.0 * 60 * dt;
+                                other.y += (this.y - other.y) / dist * 35.0 * 60 * dt;
+                            }
+                        }
+                    });
+                }
+
                 if (this.type === 'hex-yoyo') {
                     if (!this.owner || this.owner.markedForDeletion) {
                         this.markedForDeletion = true;
@@ -1810,11 +2271,11 @@
 
                     // Pull Grid (Massive)
                     if (grid) {
-                        grid.applyForce(this.x, this.y, 1000, -4.0);
+                        grid.applyForce(this.x, this.y, 600, -4.0);
                     }
 
-                    // Limit the radius strictly to a smaller localized area (800 pixels)
-                    const maxSuckRadius = 800;
+                    // Limit the radius strictly to a smaller localized area (600 pixels)
+                    const maxSuckRadius = 600;
 
                     // Pull Player (Radius Limited)
                     const distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
@@ -1831,7 +2292,7 @@
                     }
                     // Pull Enemies (Radius Limited)
                     enemies.forEach(other => {
-                        if (other !== this) {
+                        if (other !== this && !['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'black-hole'].includes(other.type)) {
                             const dist = Math.hypot(other.x - this.x, other.y - this.y);
                             
                             if (other.type === 'gravity-well' || other.type === 'super-gravity-well') {
@@ -1883,7 +2344,7 @@
 
                     // Pull Grid
                     if (grid) {
-                        grid.applyForce(this.x, this.y, 300, -1.6); // DOUBLED
+                        grid.applyForce(this.x, this.y, 200, -1.6); // DOUBLED
                     }
 
                     // Pull Player
@@ -1894,15 +2355,15 @@
                     }
                     // Pull Enemies
                     enemies.forEach(other => {
-                        if (other !== this) {
+                        if (other !== this && other.type !== 'dog-bone-bomb' && !['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'black-hole'].includes(other.type)) {
                             const isOtherWell = other.type === 'gravity-well' || other.type === 'super-gravity-well';
-                            if (!isOtherWell && (Math.abs(other.x - this.x) > 300 || Math.abs(other.y - this.y) > 300)) return;
+                            if (!isOtherWell && (Math.abs(other.x - this.x) > 200 || Math.abs(other.y - this.y) > 200)) return;
                             const dist = Math.hypot(other.x - this.x, other.y - this.y);
                             
                             if (isOtherWell) {
                                 if (dist === 0) {
                                     other.x += 1; // Nudge to prevent NaN errors
-                                } else if (dist < 300) {
+                                } else if (dist < 200) {
                                     const angle = Math.atan2(other.y - this.y, other.x - this.x);
                                     
                                     // Pull towards each other
@@ -1926,7 +2387,7 @@
                                     other.x += (this.x - other.x) / dist * 0.5 * 60 * dt;
                                     other.y += (this.y - other.y) / dist * 0.5 * 60 * dt;
                                 }
-                            } else if (dist < 300) {
+                            } else if (dist < 200) {
                                 // Normal suck logic
                                 other.x += (this.x - other.x) / dist * 1.5 * 60 * dt;
                                 other.y += (this.y - other.y) / dist * 1.5 * 60 * dt;
@@ -2001,6 +2462,7 @@
                     
                     // Stage 3 Spawning (Final turret destroyed, vulnerable)
                     if (this.finalTurretSpawned && this.turrets.length === 0) {
+                        this.color = '#ffff00';
                         this.spawnTimer = (this.spawnTimer || 0) + dt;
                         if (this.spawnTimer > 1.0) { // Pours out 10 enemies each sec
                             this.spawnTimer = 0;
@@ -2035,7 +2497,7 @@
                         arrow.velocity.x = Math.cos(angle);
                         arrow.velocity.y = Math.sin(angle);
                         arrow.angle = angle;
-                        arrow.color = '#ffaa00';
+                        arrow.color = '#ffff00';
                         enemies.push(arrow);
                     }
                     this.angle += this.spinSpeed * 60 * dt;
@@ -2054,8 +2516,22 @@
                     if (this.shootTimer > this.shootThreshold) {
                         this.shootTimer = 0;
                         this.shootThreshold = 1.5 + Math.random() * 1.0;
-                        const missile = new Enemy(this.x, this.y, 'heat-seeker');
-                        enemies.push(missile);
+                        
+                        for (let i = 0; i < 3; i++) {
+                            const missile = new Enemy(this.x, this.y, 'heat-seeker');
+                            missile.x += (Math.random() - 0.5) * 40;
+                            missile.y += (Math.random() - 0.5) * 40;
+                            enemies.push(missile);
+                        }
+                        for (let i = 0; i < 8; i++) {
+                            const arrow = new Enemy(this.x, this.y, 'arrow');
+                            const angle = (i * Math.PI * 2) / 8 + this.angle;
+                            arrow.velocity.x = Math.cos(angle);
+                            arrow.velocity.y = Math.sin(angle);
+                            arrow.angle = angle;
+                            arrow.color = '#ffff00';
+                            enemies.push(arrow);
+                        }
                     }
                     this.angle += this.spinSpeed * 60 * dt;
                     return;
@@ -2100,53 +2576,81 @@
                     return; // Override default movement
                 }
 
-                if (this.type === 'ruby') {
-                    // Aggressive Chase
-                    const angle = Math.atan2(player.y - this.y, player.x - this.x);
-                    this.velocity.x = Math.cos(angle);
-                    this.velocity.y = Math.sin(angle);
+                if (this.type === 'ruby-red') {
+                    this.warpCooldown = Math.max(0, (this.warpCooldown || 0) - dt);
+                    // randomly roaming around
+                    if (this.wanderAngle === undefined) {
+                        this.wanderAngle = Math.random() * Math.PI * 2;
+                    }
+                    this.wanderAngle += (Math.random() - 0.5) * 0.2;
+                    this.velocity.x = Math.cos(this.wanderAngle);
+                    this.velocity.y = Math.sin(this.wanderAngle);
                     
-                    // Spawn Mini-Titans (time-based)
-                    this.spawnTimer = (this.spawnTimer || 0) + dt;
-                    if (this.spawnTimer > 2) { // Every 2 seconds
-                        enemies.push(new Enemy(this.x, this.y, 'mini-titan'));
-                        this.spawnTimer = 0;
+                    if (this.x - this.radius < 0 && this.velocity.x < 0) {
+                        this.velocity.x *= -1;
+                        this.wanderAngle = Math.atan2(this.velocity.y, this.velocity.x);
+                    } else if (this.x + this.radius > world.width && this.velocity.x > 0) {
+                        this.velocity.x *= -1;
+                        this.wanderAngle = Math.atan2(this.velocity.y, this.velocity.x);
+                    }
+                    if (this.y - this.radius < 0 && this.velocity.y < 0) {
+                        this.velocity.y *= -1;
+                        this.wanderAngle = Math.atan2(this.velocity.y, this.velocity.x);
+                    } else if (this.y + this.radius > world.height && this.velocity.y > 0) {
+                        this.velocity.y *= -1;
+                        this.wanderAngle = Math.atan2(this.velocity.y, this.velocity.x);
                     }
                 }
 
-                if (this.type === 'emerald') {
-                    const hpPercent = this.hp / this.maxHp;
+                if (this.type === 'centipede') {
+                    if (!this.leader || this.leader.markedForDeletion) {
+                        this.isHead = true;
+                        this.leader = null;
+                    }
                     
-                    if (hpPercent > 0.66) {
-                        // Phase 1: Stationary, Spawn Arrows
-                        this.velocity = {x: 0, y: 0};
-                        this.spawnTimer = (this.spawnTimer || 0) + dt;
-                        if (this.spawnTimer > 1.5) { // Every 1.5 seconds
-                            for(let i=-2; i<=2; i++) {
-                                const arrow = new Enemy(this.x, this.y, 'arrow');
-                                const angle = Math.atan2(player.y - this.y, player.x - this.x) + i * 0.2;
-                                arrow.velocity.x = Math.cos(angle);
-                                arrow.velocity.y = Math.sin(angle);
-                                arrow.angle = angle; // Rotate sprite
-                                enemies.push(arrow);
-                            }
-                            this.spawnTimer = 0;
+                    if (this.isHead) {
+                        if (this.wanderAngle === undefined) {
+                            this.wanderAngle = Math.random() * Math.PI * 2;
                         }
-                    } else if (hpPercent > 0.33) {
-                        // Phase 2: Spawn Mini-Boss
-                        this.velocity = {x: 0, y: 0};
-                        if (!this.miniBossSpawned) {
-                            const mb = new Enemy(this.x, this.y + 100, 'ruby');
-                            mb.hp = 40; // Reduced HP
-                            mb.radius = 30;
-                            enemies.push(mb);
-                            this.miniBossSpawned = true;
+                        this.wanderAngle += (Math.random() - 0.5) * 0.2;
+                        this.velocity.x = Math.cos(this.wanderAngle);
+                        this.velocity.y = Math.sin(this.wanderAngle);
+                        
+                        if (this.x - this.radius < 0 && this.velocity.x < 0) {
+                            this.velocity.x *= -1;
+                            this.wanderAngle = Math.atan2(this.velocity.y, this.velocity.x);
+                        } else if (this.x + this.radius > world.width && this.velocity.x > 0) {
+                            this.velocity.x *= -1;
+                            this.wanderAngle = Math.atan2(this.velocity.y, this.velocity.x);
+                        }
+                        if (this.y - this.radius < 0 && this.velocity.y < 0) {
+                            this.velocity.y *= -1;
+                            this.wanderAngle = Math.atan2(this.velocity.y, this.velocity.x);
+                        } else if (this.y + this.radius > world.height && this.velocity.y > 0) {
+                            this.velocity.y *= -1;
+                            this.wanderAngle = Math.atan2(this.velocity.y, this.velocity.x);
+                        }
+                        
+                        this.spawnTimer = (this.spawnTimer || 0) + dt;
+                        if (this.spawnTimer > 0.333) {
+                            this.spawnTimer = 0;
+                            const types = ['grunt', 'weaver', 'spinner'];
+                            enemies.push(new Enemy(this.x, this.y, types[Math.floor(Math.random() * types.length)]));
                         }
                     } else {
-                        // Phase 3: Chase
-                        const angle = Math.atan2(player.y - this.y, player.x - this.x);
-                        this.velocity.x = Math.cos(angle);
-                        this.velocity.y = Math.sin(angle);
+                        const dist = Math.hypot(this.leader.x - this.x, this.leader.y - this.y);
+                        const angleToLeader = Math.atan2(this.leader.y - this.y, this.leader.x - this.x);
+                        if (dist > this.radius * 1.2) { // Follow distance spacing
+                            this.velocity.x = Math.cos(angleToLeader);
+                            this.velocity.y = Math.sin(angleToLeader);
+                        } else {
+                            this.velocity.x *= 0.5; // Smooth breaking to prevent jitter
+                            this.velocity.y *= 0.5;
+                        }
+                    }
+                    
+                    if (Math.abs(this.velocity.x) > 0.01 || Math.abs(this.velocity.y) > 0.01) {
+                        this.angle = Math.atan2(this.velocity.y, this.velocity.x);
                     }
                 }
                 
@@ -2155,17 +2659,47 @@
                 }
 
                 // Spinner & Dog Bone Movement (Drift lazily and bounce off walls)
-                if (this.type === 'spinner' || this.type === 'dog-bone-bomb') {
+                if (this.type === 'spinner' || this.type === 'dog-bone-bomb' || this.type === 'rocket') {
+                    let bounced = false;
                     if ((this.x - this.radius < 0 && this.velocity.x < 0) || (this.x + this.radius > world.width && this.velocity.x > 0)) {
                         this.velocity.x *= -1;
+                        bounced = true;
                     }
                     if ((this.y - this.radius < 0 && this.velocity.y < 0) || (this.y + this.radius > world.height && this.velocity.y > 0)) {
                         this.velocity.y *= -1;
+                        bounced = true;
+                    }
+                    if (bounced && this.type === 'rocket') {
+                        this.angle = Math.atan2(this.velocity.y, this.velocity.x);
+                    }
+
+                    // Rocket Anti-Crowding (Spacing)
+                    if (this.type === 'rocket') {
+                        enemies.forEach(other => {
+                            if (other !== this && other.type === 'rocket' && !other.markedForDeletion) {
+                                let dx = this.x - other.x;
+                                let dy = this.y - other.y;
+                                if (dx === 0 && dy === 0) { dx = (Math.random() - 0.5) || 0.1; dy = (Math.random() - 0.5) || 0.1; }
+                                const distSq = dx * dx + dy * dy;
+                                const minSpace = 90; // Desired spacing in pixels
+                                if (distSq < minSpace * minSpace) {
+                                    const dist = Math.sqrt(distSq);
+                                    const overlap = minSpace - dist;
+                                    const push = (overlap / minSpace) * 3.0; // Push strength per frame
+                                    this.x += (dx / dist) * push * 60 * dt;
+                                    this.y += (dy / dist) * push * 60 * dt;
+                                }
+                            }
+                        });
+                        
+                        // Prevent rockets from being pushed out of bounds by anti-crowding
+                        this.x = Math.max(this.radius, Math.min(world.width - this.radius, this.x));
+                        this.y = Math.max(this.radius, Math.min(world.height - this.radius, this.y));
                     }
                 }
 
                 // Default chase behavior if not performing a special action (like dodging)
-                if (!isDodging && this.type !== 'spinner' && this.type !== 'dog-bone-bomb' && this.type !== 'gravity-well' && !this.type.startsWith('snake') && !['sapphire', 'emerald', 'ruby', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'hex-dodger'].includes(this.type)) {
+                if (!isDodging && this.type !== 'spinner' && this.type !== 'dog-bone-bomb' && this.type !== 'rocket' && this.type !== 'gravity-well' && !this.type.startsWith('snake') && !['sapphire', 'centipede', 'ruby-red', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'hex-dodger'].includes(this.type)) {
                     this.velocity.x = Math.cos(angleToPlayer);
                     this.velocity.y = Math.sin(angleToPlayer);
                     
@@ -2191,6 +2725,15 @@
                 this.y += this.velocity.y * this.speed * 60 * dt;
                 this.angle += this.spinSpeed * 60 * dt;
 
+                // Update tracer trail
+                if (this.type === 'rocket') {
+                    if (!this.trail) this.trail = [];
+                    this.trail.push({ x: this.x, y: this.y });
+                    if (this.trail.length > 10) { // Keep last 10 frames for tail length
+                        this.trail.shift();
+                    }
+                }
+
                 // Prevent the Hex-Dodger from dodging out of bounds and deleting itself
                 if (this.type === 'hex-dodger') {
                     if (this.x - this.radius < 0) { this.x = this.radius; this.velocity.x *= -1; }
@@ -2200,11 +2743,127 @@
                     else if (this.y + this.radius > world.height) { this.y = world.height - this.radius; this.velocity.y *= -1; }
                 }
 
-                // New Rule: Despawn if enemy leaves the play area
-                const offscreenBuffer = 100;
-                if (this.x < -offscreenBuffer || this.x > world.width + offscreenBuffer ||
-                    this.y < -offscreenBuffer || this.y > world.height + offscreenBuffer) {
-                    this.markedForDeletion = true;
+                // New Rule: Despawn if standard enemy leaves the play area (bosses are exempt)
+                if (!['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'black-hole'].includes(this.type)) {
+                    const offscreenBuffer = Math.max(200, this.radius + 50); 
+                    if (this.x < -offscreenBuffer || this.x > world.width + offscreenBuffer ||
+                        this.y < -offscreenBuffer || this.y > world.height + offscreenBuffer) {
+                        this.markedForDeletion = true;
+                    }
+                }
+            }
+        }
+
+        const particleRenderCache = {};
+        function getCachedParticle(color) {
+            if (particleRenderCache[color]) return particleRenderCache[color];
+            
+            const canvas = document.createElement('canvas');
+            const size = 8; // Small off-screen canvas for the particle
+            canvas.width = size;
+            canvas.height = size;
+            const pCtx = canvas.getContext('2d');
+            
+            pCtx.beginPath();
+            pCtx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+            pCtx.fillStyle = color;
+            pCtx.fill();
+            
+            particleRenderCache[color] = canvas;
+            return canvas;
+        }
+
+        const explosionSpriteCache = {};
+        function getExplosionSpriteSheet(color) {
+            if (explosionSpriteCache[color]) return explosionSpriteCache[color];
+
+            const frames = 30; // 30 frames, half a second at 60fps
+            const size = 64; 
+            const canvas = document.createElement('canvas');
+            canvas.width = size * frames;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+
+            // Pre-calculate 5 random particles for a generic explosion
+            const particles = [];
+            for (let i = 0; i < 5; i++) {
+                particles.push({
+                    angle: Math.random() * Math.PI * 2,
+                    speed: Math.random() * 20 + 5, // speed multiplier
+                    radius: Math.random() * 2 + 1
+                });
+            }
+
+            for (let i = 0; i < frames; i++) {
+                const progress = i / (frames - 1); 
+                const alpha = 1 - progress; // Fade out linearly
+                
+                ctx.save();
+                ctx.translate(i * size + size / 2, size / 2);
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = color;
+                
+                for (let p of particles) {
+                    // Simulate friction by easing the distance
+                    const dist = p.speed * (1 - Math.pow(0.85, i)); 
+                    const px = Math.cos(p.angle) * dist;
+                    const py = Math.sin(p.angle) * dist;
+                    
+                    // Stamp the exact same circle math as standard particles
+                    ctx.beginPath();
+                    ctx.arc(px, py, p.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
+
+            explosionSpriteCache[color] = canvas;
+            return canvas;
+        }
+
+        class ExplosionAnimation {
+            constructor() {
+                this.x = 0;
+                this.y = 0;
+                this.frame = 0;
+                this.markedForDeletion = false;
+                this.timer = 0;
+                this.frameDuration = 0.5 / 30; // 30 frames over 0.5 seconds
+                this.angle = 0;
+            }
+
+            init(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.spriteSheet = getExplosionSpriteSheet(color);
+                this.frame = 0;
+                this.timer = 0;
+                this.markedForDeletion = false;
+                this.angle = Math.random() * Math.PI * 2; // Random rotation so they don't look identical
+                return this;
+            }
+
+            draw(ctx, view) {
+                const size = 64;
+                if (this.x + size / 2 < view.x - view.buffer || this.x - size / 2 > view.x + view.width + view.buffer ||
+                    this.y + size / 2 < view.y - view.buffer || this.y - size / 2 > view.y + view.height + view.buffer) return;
+
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+                ctx.drawImage(this.spriteSheet, this.frame * size, 0, size, size, -size / 2, -size / 2, size, size);
+                ctx.restore();
+            }
+
+            update(dt) {
+                this.timer += dt;
+                while (this.timer >= this.frameDuration) {
+                    this.timer -= this.frameDuration;
+                    this.frame++;
+                    if (this.frame >= 30) {
+                        this.markedForDeletion = true;
+                        break;
+                    }
                 }
             }
         }
@@ -2213,7 +2872,6 @@
             constructor() {
                 this.x = 0;
                 this.y = 0;
-                this.color = '#fff';
                 this.radius = 1;
                 this.markedForDeletion = false;
                 this.velocity = { x: 0, y: 0 };
@@ -2224,7 +2882,7 @@
             init(x, y, color) {
                 this.x = x;
                 this.y = y;
-                this.color = color;
+                this.cachedImg = getCachedParticle(color);
                 this.radius = Math.random() * 2;
                 const velocityMultiplier = Math.random() * 6;
                 const angle = Math.random() * Math.PI * 2;
@@ -2243,10 +2901,7 @@
                 }
 
                 ctx.globalAlpha = this.alpha;
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2, false);
-                ctx.fillStyle = this.color;
-                ctx.fill();
+                ctx.drawImage(this.cachedImg, this.x - this.radius, this.y - this.radius, this.radius * 2, this.radius * 2);
             }
 
             update(dt) {
@@ -2352,19 +3007,25 @@
         let spawnTimer = 0;
         let cornerSpawnTimer = 0;
         
-        function updateBoostUI() {
+        function updateUpgradesUI() {
             let boostLevel = 0;
             if (scoreStreak >= 25000) boostLevel = 3;
             else if (scoreStreak >= 15000) boostLevel = 2;
             else if (scoreStreak >= 5000) boostLevel = 1;
             boostEl.innerText = boostLevel;
+
+            let gunLevel = 1;
+            if (scoreStreak >= 45000) gunLevel = 4;
+            else if (scoreStreak >= 20000) gunLevel = 3;
+            else if (scoreStreak >= 10000) gunLevel = 2;
+            gunEl.innerText = gunLevel;
         }
         
         function addScore(points) {
             score += points;
             scoreStreak += points;
             scoreEl.innerHTML = score;
-            updateBoostUI();
+            updateUpgradesUI();
             
             if (score >= nextLifeThreshold) {
                 lives++;
@@ -2417,6 +3078,7 @@
             enemies.forEach(e => e.markedForDeletion = true); // Clear all enemies
             projectiles.forEach(p => p.markedForDeletion = true);
             particles.forEach(p => p.markedForDeletion = true);
+            explosions.forEach(e => e.markedForDeletion = true);
             orbs.forEach(o => o.markedForDeletion = true);
             
             level++;
@@ -2431,6 +3093,12 @@
             bombEffect.respawnQueue = [];
 
             levelTransitioning = false;
+
+            // Bring the grid back if it was destroyed by a black hole
+            clearTimeout(gridDestructionTimeout);
+            if (!grid) {
+                grid = new Grid(world.width, world.height, 50);
+            }
 
             const isBossLevel = level % 3 === 0;
             showLevelTitle(isBossLevel ? "BOSS FIGHT" : `LEVEL ${level}`, isBossLevel ? "red" : "white");
@@ -2486,13 +3154,25 @@
             return { x, y };
         }
 
+        function getSafeInnerSpawnPoint(padding) {
+            let x, y;
+            let attempts = 0;
+            const safeDist = 800; // Minimum safe distance from player
+            do {
+                x = padding + Math.random() * (world.width - padding * 2);
+                y = padding + Math.random() * (world.height - padding * 2);
+                attempts++;
+            } while (Math.hypot(player.x - x, player.y - y) < safeDist && attempts < 20);
+            return { x, y };
+        }
+
         function spawnEnemies(dt) {
             // Boss Level Logic
             if (level % 3 === 0) {
                 if (!bossSpawned) {
                     let type = 'sapphire';
-                    if (level === 6) type = 'ruby';
-                    if (level === 9) type = 'emerald';
+                    if (level === 6) type = 'ruby-red';
+                    if (level === 9) type = 'centipede';
                     if (level === 12) type = 'mothership';
                     if (level > 12) return; // Stop spawning completely if going past level 12
                     
@@ -2501,6 +3181,17 @@
 
                     // Guarantee the boss spawns safely away from the player
                     let safePos = getSafeEdgeSpawnPoint(150);
+                    
+                    // Ensure the massive mothership spawns fully inside the grid to prevent out-of-bounds clipping
+                    if (type === 'mothership') {
+                        let attempts = 0;
+                        do {
+                            safePos.x = 300 + Math.random() * (world.width - 600);
+                            safePos.y = 300 + Math.random() * (world.height - 600);
+                            attempts++;
+                        } while (Math.hypot(player.x - safePos.x, player.y - safePos.y) < 800 && attempts < 20);
+                    }
+
                     const boss = new Enemy(safePos.x, safePos.y, type);
                     
                     if (type === 'mothership') {
@@ -2512,39 +3203,68 @@
                             boss.turrets.push(turret);
                             enemies.push(turret);
                         }
-                    } else {
-                        // Scale boss stats based on the number of times it has been encountered
+                    enemies.push(boss);
+                    } else if (type === 'centipede') {
                         const encounters = bossEncounterCounts[type];
-                        boss.maxHp += (encounters - 1) * 50; // Add 50 HP per encounter
+                        let current = null;
+                        for (let i = 0; i < 75; i++) { // Spawn a 75-link centipede
+                            const segment = new Enemy(safePos.x, safePos.y, 'centipede');
+                            segment.maxHp += (encounters - 1) * 5; 
+                            segment.hp = segment.maxHp;
+                            segment.speed += (encounters - 1) * 0.3;
+                            segment.isHead = (i === 0);
+                            if (current) {
+                                segment.leader = current;
+                                current.follower = segment;
+                            }
+                            current = segment;
+                            enemies.push(segment);
+                        }
+                    } else if (type === 'ruby-red') {
+                        const encounters = bossEncounterCounts[type];
+                        for (let i = 0; i < 3; i++) {
+                            let safePos = getSafeEdgeSpawnPoint(150);
+                            const boss = new Enemy(safePos.x, safePos.y, type);
+                            boss.maxHp += (encounters - 1) * 20;
+                            boss.hp = boss.maxHp;
+                            boss.speed += (encounters - 1) * 0.3;
+                            enemies.push(boss);
+                        }
+                    } else {
+                        const encounters = bossEncounterCounts[type];
+                        boss.maxHp += (encounters - 1) * 50;
                         boss.hp = boss.maxHp;
-                        boss.speed += (encounters - 1) * 0.3; // Make them noticeably faster
+                        boss.speed += (encounters - 1) * 0.3;
+                        enemies.push(boss);
                     }
 
-                    enemies.push(boss);
                     bossSpawned = true;
                 }
 
                 // Handle Boss Minion Cap & Spawning
-                const encounters = bossEncounterCounts[currentBossType] || 1;
-                const bossEnemyCap = currentBossType === 'mothership' ? 80 : 5 + (encounters * 5); // Increased cap to support pouring swarms
-                
-                const bossAlive = enemies.some(e => ['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini'].includes(e.type));
-                if (bossAlive && enemies.length < bossEnemyCap) {
-                    spawnTimer += dt;
-                    const spawnRate = currentBossType === 'mothership' ? 0.35 : 1.0; // Much more chaotic spawn rate
-                    if (spawnTimer > spawnRate) { 
-                        spawnTimer = 0;
-                        const spawnCount = currentBossType === 'mothership' ? 3 : 1; // Spawn 3 at a time for the final boss
-                        for (let i = 0; i < spawnCount; i++) {
-                            const radius = 30;
-                            const pos = getSafeEdgeSpawnPoint(radius);
-                            const types = currentBossType === 'mothership' ? ['grunt', 'weaver', 'spinner', 'hex-dodger'] : ['grunt', 'weaver', 'spinner'];
-                            enemies.push(new Enemy(pos.x, pos.y, types[Math.floor(Math.random() * types.length)]));
+                if (currentBossType !== 'ruby-red' && currentBossType !== 'centipede') {
+                    const encounters = bossEncounterCounts[currentBossType] || 1;
+                    const bossEnemyCap = currentBossType === 'mothership' ? 80 : 5 + (encounters * 5); // Increased cap to support pouring swarms
+                    
+                    const bossAlive = enemies.some(e => ['sapphire', 'mothership', 'mothership-mini'].includes(e.type));
+                    if (bossAlive && enemies.length < bossEnemyCap) {
+                        spawnTimer += dt;
+                        const spawnRate = currentBossType === 'mothership' ? 0.35 : 1.0; // Much more chaotic spawn rate
+                        if (spawnTimer > spawnRate) { 
+                            spawnTimer = 0;
+                            const spawnCount = currentBossType === 'mothership' ? 3 : 1; // Spawn 3 at a time for the final boss
+                            for (let i = 0; i < spawnCount; i++) {
+                                const radius = 30;
+                                const types = currentBossType === 'mothership' ? ['grunt', 'weaver', 'spinner', 'hex-dodger'] : ['grunt', 'weaver', 'spinner'];
+                            const type = types[Math.floor(Math.random() * types.length)];
+                            const pos = (type === 'spinner') ? getSafeInnerSpawnPoint(100) : getSafeEdgeSpawnPoint(radius);
+                            enemies.push(new Enemy(pos.x, pos.y, type));
+                            }
                         }
                     }
-                }
 
-                return; // Boss handles spawning
+                    return; // Boss handles spawning
+                }
             }
             
             let currentHexCount = enemies.filter(e => e.type === 'hex-dodger').length;
@@ -2594,16 +3314,84 @@
 
                     // Spawn a group of enemies at each corner. Group size increases with score.
                     const groupSize = 2 + Math.floor(score / 10000);
+                    const patrolAxis = Math.random() < 0.5 ? 'x' : 'y';
+
+                    // Determine direction based on which corner we're in, to ensure they fly inwards
+                    const directionX = (corner.x < world.width / 2) ? 1 : -1;
+                    const directionY = (corner.y < world.height / 2) ? 1 : -1;
+
+                    let vel, angle;
+                    if (patrolAxis === 'x') {
+                        vel = { x: directionX, y: 0 };
+                    } else {
+                        vel = { x: 0, y: directionY };
+                    }
+                    angle = Math.atan2(vel.y, vel.x);
+
                     for (let i = 0; i < groupSize; i++) {
-                        const spawnX = corner.x + (Math.random() - 0.5) * 100;
-                        const spawnY = corner.y + (Math.random() - 0.5) * 100;
-                        // For corner waves, use simpler enemies
-                        const enemyType = Math.random() < 0.4 ? 'weaver' : 'grunt';
-                        enemies.push(new Enemy(spawnX, spawnY, enemyType));
+                        const spawnX = corner.x;
+                        const spawnY = corner.y;
+                        if (level === 8) {
+                            const r = new Enemy(spawnX, spawnY, 'rocket');
+                            r.velocity = { x: vel.x, y: vel.y };
+                            r.angle = angle;
+                            if (vel.x !== 0) {
+                                r.x = spawnX;
+                                r.y = Math.floor(spawnY / 50) * 50 + (i * directionY * 50) + 25;
+                            } else {
+                                r.y = spawnY;
+                                r.x = Math.floor(spawnX / 50) * 50 + (i * directionX * 50) + 25;
+                            }
+                            r.x = Math.max(r.radius, Math.min(world.width - r.radius, r.x));
+                            r.y = Math.max(r.radius, Math.min(world.height - r.radius, r.y));
+                            enemies.push(r);
+                        } else if (level === 11) {
+                            const rx = spawnX + (Math.random() - 0.5) * 100;
+                            const ry = spawnY + (Math.random() - 0.5) * 100;
+                            enemies.push(new Enemy(rx, ry, 'repulsor'));
+                        } else {
+                            // For corner waves, use simpler enemies
+                            const rx = spawnX + (Math.random() - 0.5) * 100;
+                            const ry = spawnY + (Math.random() - 0.5) * 100;
+                            const enemyType = Math.random() < 0.4 ? 'weaver' : 'grunt';
+                            enemies.push(new Enemy(rx, ry, enemyType));
+                        }
                         enemiesRemainingToSpawn--;
                     }
                 });
                 return; // Skip the regular edge spawn on this frame
+            }
+
+            if (level === 8) {
+                const groupSize = Math.min(enemiesRemainingToSpawn, Math.floor(Math.random() * 4) + 2); // 2 to 5 rockets per cluster
+                const patrolAxis = Math.random() < 0.5 ? 'x' : 'y';
+                const direction = Math.random() < 0.5 ? 1 : -1;
+                let vel, angle;
+                if (patrolAxis === 'x') {
+                    vel = { x: direction, y: 0 };
+                } else {
+                    vel = { x: 0, y: direction };
+                }
+                angle = Math.atan2(vel.y, vel.x);
+
+                const innerPos = getSafeInnerSpawnPoint(100);
+                for (let i = 0; i < groupSize; i++) {
+                    const r = new Enemy(innerPos.x, innerPos.y, 'rocket');
+                    r.velocity = { x: vel.x, y: vel.y };
+                    r.angle = angle;
+                    if (vel.x !== 0) {
+                        r.x = innerPos.x;
+                        r.y = Math.floor(innerPos.y / 50) * 50 + ((i - Math.floor(groupSize / 2)) * 50) + 25;
+                    } else {
+                        r.y = innerPos.y;
+                        r.x = Math.floor(innerPos.x / 50) * 50 + ((i - Math.floor(groupSize / 2)) * 50) + 25;
+                    }
+                    r.x = Math.max(r.radius, Math.min(world.width - r.radius, r.x));
+                    r.y = Math.max(r.radius, Math.min(world.height - r.radius, r.y));
+                    enemies.push(r);
+                    enemiesRemainingToSpawn--;
+                }
+                return;
             }
 
             // --- Regular Edge Spawn ---
@@ -2615,7 +3403,11 @@
             const rand = Math.random();
             let enemyType;
 
-            if (rand < 0.05 && frame > 600) { // Spawn snake after 10 seconds
+            if (level === 11) {
+                if (rand < 0.75) enemyType = 'repulsor'; // Sun enemies (Increased by 50%)
+                else if (rand < 0.95) enemyType = 'dog-bone-bomb'; // Bone gates
+                else enemyType = 'weaver';
+            } else if (rand < 0.05 && frame > 600) { // Spawn snake after 10 seconds
                 const head = new Enemy(x, y, 'snake-head');
                 let lastSegment = head;
                 for (let i = 0; i < 8; i++) { // 8 body segments
@@ -2638,6 +3430,37 @@
                 enemiesRemainingToSpawn -= 12;
                 return;
             } else if (rand < 0.20) enemyType = 'repulsor';
+            else if (rand < 0.25) { // Rocket Group
+                const groupSize = Math.min(enemiesRemainingToSpawn, Math.floor(Math.random() * 3) + 2);
+                const patrolAxis = Math.random() < 0.5 ? 'x' : 'y';
+                const direction = Math.random() < 0.5 ? 1 : -1;
+                let vel, angle;
+                if (patrolAxis === 'x') {
+                    vel = { x: direction, y: 0 };
+                } else {
+                    vel = { x: 0, y: direction };
+                }
+                angle = Math.atan2(vel.y, vel.x);
+
+                const innerPos = getSafeInnerSpawnPoint(100);
+                for (let i = 0; i < groupSize; i++) {
+                    const r = new Enemy(innerPos.x, innerPos.y, 'rocket');
+                    r.velocity = { x: vel.x, y: vel.y };
+                    r.angle = angle;
+                    if (vel.x !== 0) {
+                        r.x = innerPos.x;
+                        r.y = Math.floor(innerPos.y / 50) * 50 + ((i - Math.floor(groupSize / 2)) * 50) + 25;
+                    } else {
+                        r.y = innerPos.y;
+                        r.x = Math.floor(innerPos.x / 50) * 50 + ((i - Math.floor(groupSize / 2)) * 50) + 25;
+                    }
+                    r.x = Math.max(r.radius, Math.min(world.width - r.radius, r.x));
+                    r.y = Math.max(r.radius, Math.min(world.height - r.radius, r.y));
+                    enemies.push(r);
+                    enemiesRemainingToSpawn--;
+                }
+                return;
+            }
             else if (rand < 0.28) enemyType = 'gravity-well';
             else if (rand < 0.35) enemyType = 'dog-bone-bomb';
             else if (rand < 0.50) enemyType = (currentHexCount < maxHexCount) ? 'hex-dodger' : 'spinner'; // Increased spawn chance
@@ -2645,8 +3468,14 @@
             else if (rand < 0.75) enemyType = 'weaver';
             else enemyType = 'grunt';
 
+            if (enemyType === 'spinner' || enemyType === 'dog-bone-bomb') {
+                const innerPos = getSafeInnerSpawnPoint(100);
+                x = innerPos.x;
+                y = innerPos.y;
+            }
+
             enemies.push(new Enemy(x, y, enemyType));
-            enemiesRemainingToSpawn--;
+            if (enemyType !== 'dog-bone-bomb') enemiesRemainingToSpawn--;
         }
 
         function useBomb() {
@@ -2687,6 +3516,12 @@
             }
         }
 
+        function createSpriteExplosion(x, y, color) {
+            sounds.explode();
+            if (grid) grid.applyForce(x, y, 150, 12);
+            explosions.push(explosionPool.get().init(x, y, color));
+        }
+
         function togglePause() {
 
            
@@ -2706,6 +3541,7 @@
                 pauseMenu.classList.add('hidden');
                 canvas.classList.remove('blurred-bg');
                 lastTime = performance.now(); // Prevents large dt jump
+                lastTimeForDt = performance.now(); // Resync physics delta time
                 if (musicPlaying) {
                     sounds.startMusic(); // Restart music scheduler
                 }
@@ -2730,24 +3566,29 @@
             scoreEl.innerHTML = score;
             livesEl.innerHTML = lives;
             bombsEl.innerHTML = bombs;
-            updateBoostUI();
+            updateUpgradesUI();
             level = 1;
             levelFrame = 0;
             hexSpawnsTriggered = 0;
             bossSpawned = false;
             currentBossType = null;
-            bossEncounterCounts = { sapphire: 0, ruby: 0, emerald: 0, mothership: 0 };
+            bossEncounterCounts = { sapphire: 0, 'ruby-red': 0, centipede: 0, mothership: 0 };
             spawnTimer = 0;
             cornerSpawnTimer = 0;
             waveMsg.classList.add('hidden');
+            isTestRoom = false;
+            testRoomIndex = 0;
             showLinesCheck.checked = false; debugShowLines = false;
             levelEl.innerText = level;
             projectiles = [];
             enemies = [];
             particles = [];
+            explosions = [];
             orbs = [];
             projectilePool = new Pool(Projectile, 200);
             particlePool = new Pool(Particle, 1000);
+            explosionPool = new Pool(ExplosionAnimation, 200);
+            clearTimeout(gridDestructionTimeout);
             grid = new Grid(world.width, world.height, 50);
             player = new Player(world.width / 2, world.height / 2);
             enemiesRemainingToSpawn = Math.floor(150 * difficultyMultiplier);
@@ -2829,28 +3670,90 @@
             levelFrame += dt; // Use dt for level timer
 
             // Level Progression Logic
-            if (level % 3 !== 0) { // Non-boss levels
+            if (isTestRoom) {
+                if (enemies.length === 0 && !bombEffect.isDeathBomb && !levelTransitioning) {
+                    if (testRoomIndex < testRoomWaves.length) {
+                        const wave = testRoomWaves[testRoomIndex];
+                        showLevelTitle("TEST: " + wave.type.toUpperCase(), "#ffff00");
+                        
+                        levelTransitioning = true;
+                        setTimeout(() => {
+                            for (let i = 0; i < wave.count; i++) {
+                                const isInner = wave.type === 'spinner' || wave.type === 'dog-bone-bomb' || wave.type === 'rocket';
+                                const pos = isInner ? getSafeInnerSpawnPoint(100) : getSafeEdgeSpawnPoint(50);
+                                if (wave.type === 'snake-head') {
+                                    const head = new Enemy(pos.x, pos.y, 'snake-head');
+                                    let lastSegment = head;
+                                    for (let j = 0; j < 8; j++) {
+                                        const segment = new Enemy(pos.x, pos.y, 'snake-body');
+                                        segment.leader = lastSegment;
+                                        segment.radius = head.radius * 0.8;
+                                        head.segments.push(segment);
+                                        enemies.push(segment);
+                                        lastSegment = segment;
+                                    }
+                                    enemies.push(head);
+                                } else if (wave.type === 'mothership') {
+                                    const boss = new Enemy(world.width / 2, world.height / 4, 'mothership');
+                                    boss.finalTurretSpawned = false;
+                                    for (let j = 0; j < 8; j++) {
+                                        const turret = new Enemy(boss.x, boss.y, 'mothership-turret');
+                                        turret.parent = boss;
+                                        turret.angleOffset = (j * Math.PI) / 4; 
+                                        boss.turrets.push(turret);
+                                        enemies.push(turret);
+                                    }
+                                    enemies.push(boss);
+                                } else if (wave.type === 'centipede') {
+                                    let current = null;
+                                    for (let j = 0; j < 75; j++) {
+                                        const segment = new Enemy(pos.x, pos.y, 'centipede');
+                                        segment.isHead = (j === 0);
+                                        if (current) {
+                                            segment.leader = current;
+                                            current.follower = segment;
+                                        }
+                                        current = segment;
+                                        enemies.push(segment);
+                                    }
+                                } else {
+                                    enemies.push(new Enemy(pos.x, pos.y, wave.type));
+                                }
+                            }
+                            testRoomIndex++;
+                            levelTransitioning = false;
+                        }, 1500); // 1.5s delay before dropping next wave
+                    } else {
+                        showLevelTitle("TEST ROOM COMPLETE", "#00ffaa");
+                        isTestRoom = false;
+                        levelTransitioning = true;
+                        setTimeout(() => { transitionToNextLevel(); }, 2000);
+                    }
+                }
+            } else if (level % 3 !== 0) { // Non-boss levels
                 if (enemiesRemainingToSpawn <= 0) {
-                    if (enemies.length === 0 && !bombEffect.isDeathBomb) {
+                    const activeRequiredEnemies = enemies.filter(e => e.type !== 'dog-bone-bomb');
+                    if (activeRequiredEnemies.length === 0 && !bombEffect.isDeathBomb) {
                         transitionToNextLevel();
                     } else {
-                        waveMsg.innerText = `ENEMIES REMAINING: ${enemies.length}`;
+                        waveMsg.innerText = `ENEMIES REMAINING: ${activeRequiredEnemies.length}`;
                         waveMsg.classList.remove('hidden');
 
                         // Morph the last N enemies into Hex-Dodgers
-                        const currentMorphHexCount = enemies.filter(e => e.type === 'hex-dodger').length;
+                        const currentMorphHexCount = activeRequiredEnemies.filter(e => e.type === 'hex-dodger').length;
                         const maxMorphHexCount = 1 + level;
                         let morphsAllowed = maxMorphHexCount - currentMorphHexCount;
 
                         const morphCount = level * 2;
-                        if (enemies.length <= morphCount) {
+                        if (activeRequiredEnemies.length <= morphCount) {
                             enemies.forEach(enemy => {
-                                if (morphsAllowed > 0 && enemy.type !== 'hex-dodger' && enemy.type !== 'hex-yoyo' && enemy.type !== 'gravity-well' && enemy.type !== 'super-gravity-well' && !enemy.markedForDeletion) {
+                                if (morphsAllowed > 0 && enemy.type !== 'dog-bone-bomb' && enemy.type !== 'hex-dodger' && enemy.type !== 'hex-yoyo' && enemy.type !== 'gravity-well' && enemy.type !== 'super-gravity-well' && !enemy.markedForDeletion) {
                                     enemy.type = 'hex-dodger';
                                     enemy.radius = 22.5;
                                     enemy.color = '#008080';
                                     enemy.speed = 3.6;
-                                    enemy.hp = 10;
+                                    enemy.maxHp = Math.ceil(10 * difficultyMultiplier);
+                                    enemy.hp = enemy.maxHp;
                                     enemy.angry = false;
                                     enemy.dodgeCooldown = 0;
                                     enemy.missileCooldown = 0;
@@ -2863,7 +3766,7 @@
                     }
                 }
             } else { // Boss Level Failsafe
-                if (bossSpawned && enemies.length === 0 && !bombEffect.isDeathBomb) {
+                if (bossSpawned && enemies.filter(e => e.type !== 'dog-bone-bomb').length === 0 && !bombEffect.isDeathBomb) {
                     if (level < 12) {
                         transitionToNextLevel();
                     }
@@ -2874,6 +3777,7 @@
             player.update(dt, now);
             orbs.forEach(orb => orb.update(dt));
             particles.forEach(p => p.update(dt));
+            explosions.forEach(exp => exp.update(dt));
             projectiles.forEach(projectile => {
                 projectile.update(dt);
                 // Remove off-screen projectiles (check against world boundaries)
@@ -2887,25 +3791,28 @@
             enemies.forEach(enemy => enemy.update(dt));
 
             // Hex-Dodger Morph Mechanic
-            const currentPassiveHexCount = enemies.filter(e => e.type === 'hex-dodger').length;
-            const maxPassiveHexCount = 1 + level;
-            
-            if (currentPassiveHexCount < maxPassiveHexCount) {
-                for (let i = 0; i < enemies.length; i++) {
-                    const enemy = enemies[i];
-                    if (['grunt', 'weaver', 'spinner'].includes(enemy.type) && !enemy.markedForDeletion) {
-                        // 5% chance per second per eligible enemy to morph into a Hex-Dodger
-                        if (Math.random() < 0.05 * dt) {
-                            enemy.type = 'hex-dodger';
-                            enemy.radius = 22.5;
-                            enemy.color = '#008080';
-                            enemy.speed = 3.6;
-                            enemy.hp = 10;
-                            enemy.angry = false;
-                            enemy.dodgeCooldown = 0;
-                            enemy.missileCooldown = 0;
-                            createExplosion(enemy.x, enemy.y, '#008080'); // Burst of teal particles
-                            break; // Only morph one at a time
+            if (!isTestRoom) {
+                const currentPassiveHexCount = enemies.filter(e => e.type === 'hex-dodger').length;
+                const maxPassiveHexCount = 1 + level;
+                
+                if (currentPassiveHexCount < maxPassiveHexCount) {
+                    for (let i = 0; i < enemies.length; i++) {
+                        const enemy = enemies[i];
+                        if (['grunt', 'weaver', 'spinner'].includes(enemy.type) && !enemy.markedForDeletion) {
+                            // 5% chance per second per eligible enemy to morph into a Hex-Dodger
+                            if (Math.random() < 0.05 * dt) {
+                                enemy.type = 'hex-dodger';
+                                enemy.radius = 22.5;
+                                enemy.color = '#008080';
+                                enemy.speed = 3.6;
+                                enemy.maxHp = Math.ceil(10 * difficultyMultiplier);
+                                enemy.hp = enemy.maxHp;
+                                enemy.angry = false;
+                                enemy.dodgeCooldown = 0;
+                                enemy.missileCooldown = 0;
+                                createExplosion(enemy.x, enemy.y, '#008080'); // Burst of teal particles
+                                break; // Only morph one at a time
+                            }
                         }
                     }
                 }
@@ -2913,15 +3820,16 @@
 
             // Mini Bomb Effects Logic
             miniBombEffects.forEach(mb => {
-                mb.radius += 1500 * dt;
+                mb.radius += 500 * dt; // Max radius of 250 (exactly 5 grid squares)
                 mb.alpha -= 2.0 * dt;
 
                 enemies.forEach(e => {
-                    if (!e.markedForDeletion && !['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'dog-bone-bomb'].includes(e.type)) {
+                    if (!e.markedForDeletion && !['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'dog-bone-bomb', 'black-hole'].includes(e.type)) {
                         const distSq = (mb.x - e.x)**2 + (mb.y - e.y)**2;
                         if (distSq < (mb.radius + e.radius)**2) {
                             e.markedForDeletion = true;
-                            createExplosion(e.x, e.y, e.color);
+                            if (e.type === 'centipede' || e.type === 'gravity-well' || e.type === 'super-gravity-well') createSpriteExplosion(e.x, e.y, e.color);
+                            else createExplosion(e.x, e.y, e.color);
                             addScore(100);
                             
                             if (e.type === 'spinner') {
@@ -2941,8 +3849,8 @@
                             } else if (e.type === 'gravity-well') {
                                 enemies.push(new Enemy(e.x, e.y, 'super-gravity-well'));
                             } else if (e.type === 'super-gravity-well') {
-                                if (grid) grid.applyForce(e.x, e.y, 1500, 50); // Massive outward explosion wave
-                                createExplosion(e.x, e.y, '#ffffff');
+                                if (grid) grid.applyForce(e.x, e.y, 800, 50); // Massive outward explosion wave
+                                createSpriteExplosion(e.x, e.y, '#ffffff');
                             } else if (e.type !== 'hex-yoyo' && e.type !== 'dog-bone-bomb') {
                                 orbs.push(new Orb(e.x, e.y));
                             }
@@ -2964,7 +3872,7 @@
                         // Dump all captured enemies back onto the edges of the board
                         bombEffect.respawnQueue.forEach(type => {
                             const radius = 30;
-                            const pos = getSafeEdgeSpawnPoint(radius);
+                            const pos = (type === 'spinner' || type === 'dog-bone-bomb' || type === 'rocket') ? getSafeInnerSpawnPoint(100) : getSafeEdgeSpawnPoint(radius);
                             let x = pos.x;
                             let y = pos.y;
                             
@@ -2997,7 +3905,7 @@
                         if (distSq < (bombEffect.radius + enemy.radius)**2) {
                             if (!enemy.markedForDeletion) {
                                 // Bosses are immune to bombs
-                                if (['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret'].includes(enemy.type)) return;
+                                if (['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'dog-bone-bomb', 'black-hole'].includes(enemy.type)) return;
 
                                 if (bombEffect.isDeathBomb) {
                                     if (enemy.type !== 'snake-body' && enemy.type !== 'hex-yoyo' && enemy.type !== 'mothership-turret' && enemy.type !== 'mothership-final-turret') {
@@ -3016,7 +3924,8 @@
                                     }
                                 }
                             enemy.markedForDeletion = true;
-                            createExplosion(enemy.x, enemy.y, enemy.color);
+                            if (enemy.type === 'centipede' || enemy.type === 'gravity-well' || enemy.type === 'super-gravity-well') createSpriteExplosion(enemy.x, enemy.y, enemy.color);
+                            else createExplosion(enemy.x, enemy.y, enemy.color);
                         }
                         }
                     });
@@ -3051,23 +3960,14 @@
                     const distSq = dx * dx + dy * dy;
                     if (distSq < combinedRadius * combinedRadius) {
                         if (enemy.markedForDeletion) return;
+                        
+                        if (enemy.type === 'black-hole') { // Black Hole eats bullets
+                            projectile.markedForDeletion = true;
+                            return;
+                        }
 
                         if (enemy.type === 'snake-body' && !enemy.scattered) return; // invulnerable
-
-                        if (enemy.type === 'dog-bone-bomb') {
-                            projectile.markedForDeletion = true;
-                            createExplosion(projectile.x, projectile.y, '#ffaa00');
-                            return; // Invulnerable to shots, must be triggered physically
-                        }
-
-                        // Emerald Deflection (Phase 3)
-                        if (enemy.type === 'emerald' && enemy.hp < enemy.maxHp * 0.33) {
-                            if (Math.random() < 0.5) {
-                                createExplosion(projectile.x, projectile.y, '#fff'); // Spark
-                                projectile.markedForDeletion = true;
-                                return;
-                            }
-                        }
+                        if (enemy.type === 'dog-bone-bomb') return; // bullets pass right through
 
                         if (enemy.type === 'mothership') {
                             const isInvulnerable = enemy.turrets && enemy.turrets.some(t => !t.markedForDeletion);
@@ -3081,101 +3981,193 @@
                             }
                         }
 
-                        // Hit!
-                        createExplosion(enemy.x, enemy.y, enemy.color);
-                        
-                        enemy.hp--;
                         projectile.markedForDeletion = true;
+                        const hitEnemies = [enemy];
 
-                        // Spawn orb BEFORE checking for boss type
-                        if (enemy.hp <= 0 && !['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'hex-yoyo'].includes(enemy.type)) {
-                            orbs.push(new Orb(enemy.x, enemy.y));
-                       }
-
-                        if (enemy.hp <= 0) {
-                            enemy.markedForDeletion = true;
+                        if (projectile.isMissile) {
+                            if (grid) grid.applyForce(enemy.x, enemy.y, 150, 50); // shockwave
+                            if (enemy.type !== 'centipede' && enemy.type !== 'gravity-well' && enemy.type !== 'super-gravity-well') createExplosion(enemy.x, enemy.y, '#FF0000'); // extra missile explosion effect
                             
-                            if (enemy.type === 'hex-yoyo') {
-                                if (enemy.owner && !enemy.owner.markedForDeletion) {
-                                    enemy.owner.yoyoOut = false;
-                                    enemy.owner.nextYoyoMode = 'around-the-world';
-                                    enemy.owner.missileCooldown = 0.5; // Fast respawn
-                                    enemy.owner.angry = true;
-                                }
-                                return; // skip other death logic
-                            }
-
-                            // Increase Score
-                            const points = (['gravity-well', 'super-gravity-well'].includes(enemy.type) ? 500 : 100);
-                            addScore(points);
-
-                            // Death Spawns
-                            if (enemy.type === 'spinner') {
-                                for(let i=0; i<3; i++) {
-                                    enemies.push(new Enemy(enemy.x, enemy.y, 'spinner-mini'));
-                                }
-                            } else if (enemy.type === 'mini-titan') {
-                                for(let i=0; i<4; i++) {
-                                    enemies.push(new Enemy(enemy.x, enemy.y, 'grunt'));
-                                }
-                            } else if (['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini'].includes(enemy.type)) {
-                                // Boss Defeated
-                                for (let i = 0; i < 50; i++) { // Shower of orbs
-                                    orbs.push(new Orb(enemy.x + (Math.random() - 0.5) * 50, enemy.y + (Math.random() - 0.5) * 50));
-                                }
-                                addScore(5000);
-                                
-                                if (enemy.type === 'mothership') {
-                                    for (let i = 0; i < 3; i++) {
-                                        const mini = new Enemy(enemy.x, enemy.y, 'mothership-mini');
-                                        const angle = (i * Math.PI * 2) / 3;
-                                        mini.x += Math.cos(angle) * 100;
-                                        mini.y += Math.sin(angle) * 100;
-                                        enemies.push(mini);
-                                    }
-                                } else if (enemy.type === 'mothership-mini') {
-                                    const others = enemies.filter(e => e.type === 'mothership-mini' && !e.markedForDeletion);
-                                    if (others.length === 0) {
-                                        setTimeout(() => {
-                                            gameOver(true); // Game complete win
-                                        }, 2000);
-                                    }
-                                } else {
-                                    // Spawn a ramping cluster of aggressive Hex-Dodgers
-                                    const encounters = bossEncounterCounts[enemy.type] || 1;
-                                    const hexCount = 2 + (encounters * 2); 
-                                    for (let i = 0; i < hexCount; i++) {
-                                        let hex = new Enemy(enemy.x + (Math.random() - 0.5) * 100, enemy.y + (Math.random() - 0.5) * 100, 'hex-dodger');
-                                        hex.angry = true;
-                                        enemies.push(hex);
+                            // Check for splash damage
+                            enemies.forEach(other => {
+                                if (!other.markedForDeletion && other !== enemy) {
+                                    const distSqSplash = (other.x - enemy.x)**2 + (other.y - enemy.y)**2;
+                                    if (distSqSplash < (100 + other.radius)**2) {
+                                        if (other.type === 'snake-body' && !other.scattered) return;
+                                        if (other.type === 'dog-bone-bomb') return;
+                                        hitEnemies.push(other);
                                     }
                                 }
-                            } else if (enemy.type === 'snake-head') {
-                                addScore(1000);
-                                // When the head dies, its segments break off and bounce around
-                                enemy.segments.forEach(seg => {
-                                    seg.leader = null;
-                                    seg.scattered = true;
-                                    seg.hp = 1;
-                                    seg.speed = 6.0; // Fast bounce
-                                    const explodeAngle = Math.random() * Math.PI * 2;
-                                    seg.velocity.x = Math.cos(explodeAngle);
-                                    seg.velocity.y = Math.sin(explodeAngle);
-                                });
-                            } else if (enemy.type === 'gravity-well') {
-                                enemies.push(new Enemy(enemy.x, enemy.y, 'super-gravity-well'));
-                            } else if (enemy.type === 'super-gravity-well') {
-                                if (grid) grid.applyForce(enemy.x, enemy.y, 1500, 50); // Massive outward explosion wave
-                                createExplosion(enemy.x, enemy.y, '#ffffff');
-                            }
+                            });
                         }
+
+                        hitEnemies.forEach(hitEnemy => {
+                            if (hitEnemy.markedForDeletion) return;
+                            
+                            if (hitEnemy.type === 'centipede' || hitEnemy.type === 'gravity-well' || hitEnemy.type === 'super-gravity-well') createSpriteExplosion(hitEnemy.x, hitEnemy.y, hitEnemy.color);
+                            else createExplosion(hitEnemy.x, hitEnemy.y, hitEnemy.color);
+                            hitEnemy.hp--;
+
+                            if (hitEnemy.type === 'ruby-red' && hitEnemy.hp > 0) {
+                                if ((hitEnemy.warpCooldown || 0) <= 0 && Math.random() < 0.25) { // 25% chance to warp
+                                    hitEnemy.warpCooldown = 2.0; // 2 sec cooldown
+                                    // Leave standard enemies
+                                    const types = ['grunt', 'weaver', 'spinner'];
+                                    for(let i=0; i<3; i++) {
+                                        const t = types[Math.floor(Math.random() * types.length)];
+                                        enemies.push(new Enemy(hitEnemy.x + (Math.random() - 0.5)*50, hitEnemy.y + (Math.random() - 0.5)*50, t));
+                                    }
+                                    if(grid) grid.applyForce(hitEnemy.x, hitEnemy.y, 200, 50);
+                                    createExplosion(hitEnemy.x, hitEnemy.y, '#ff3333');
+                                    
+                                    hitEnemy.x = Math.random() * (world.width - 400) + 200;
+                                    hitEnemy.y = Math.random() * (world.height - 400) + 200;
+                                    
+                                    if(grid) grid.applyForce(hitEnemy.x, hitEnemy.y, 200, 50);
+                                }
+                            }
+
+                            // Spawn orb BEFORE checking for boss type
+                            if (hitEnemy.hp <= 0 && !['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini', 'hex-yoyo', 'dog-bone-bomb'].includes(hitEnemy.type)) {
+                                orbs.push(new Orb(hitEnemy.x, hitEnemy.y));
+                            }
+
+                            if (hitEnemy.hp <= 0) {
+                                hitEnemy.markedForDeletion = true;
+                                
+                                if (hitEnemy.type === 'hex-yoyo') {
+                                    if (hitEnemy.owner && !hitEnemy.owner.markedForDeletion) {
+                                        hitEnemy.owner.yoyoOut = false;
+                                        hitEnemy.owner.nextYoyoMode = 'around-the-world';
+                                        hitEnemy.owner.missileCooldown = 0.5; // Fast respawn
+                                        hitEnemy.owner.angry = true;
+                                    }
+                                    return; // skip other death logic
+                                }
+
+                                // Increase Score
+                                const points = (['gravity-well', 'super-gravity-well'].includes(hitEnemy.type) ? 500 : 100);
+                                addScore(points);
+
+                                // Death Spawns
+                                if (hitEnemy.type === 'spinner') {
+                                    for(let i=0; i<3; i++) {
+                                        enemies.push(new Enemy(hitEnemy.x, hitEnemy.y, 'spinner-mini'));
+                                    }
+                                } else if (hitEnemy.type === 'mini-titan') {
+                                    for(let i=0; i<4; i++) {
+                                        enemies.push(new Enemy(hitEnemy.x, hitEnemy.y, 'grunt'));
+                                    }
+                                } else if (['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini'].includes(hitEnemy.type)) {
+                                    let isFinalBossPiece = true;
+                                    
+                                    if (hitEnemy.type === 'centipede') {
+                                        const others = enemies.filter(e => e.type === 'centipede' && !e.markedForDeletion && e !== hitEnemy);
+                                        if (others.length > 0) {
+                                            isFinalBossPiece = false;
+                                            
+                                            // Speed up remaining pieces
+                                            others.forEach(e => {
+                                                e.speed = Math.min(e.speed * 1.10, 9.0);
+                                            });
+                                            
+                                            // Spawn standard enemies
+                                            for(let i=0; i<2; i++) {
+                                                enemies.push(new Enemy(hitEnemy.x + (Math.random() - 0.5)*30, hitEnemy.y + (Math.random() - 0.5)*30, 'grunt'));
+                                            }
+                                            
+                                            // Sever the links
+                                            if (hitEnemy.follower) {
+                                                hitEnemy.follower.leader = null;
+                                                hitEnemy.follower.isHead = true;
+                                            }
+                                            if (hitEnemy.leader) {
+                                                hitEnemy.leader.follower = null;
+                                            }
+                                            
+                                            addScore(100); // Point reward for breaking a link
+                                        }
+                                    }
+
+                                    if (hitEnemy.type === 'ruby-red') {
+                                        const others = enemies.filter(e => e.type === 'ruby-red' && !e.markedForDeletion && e !== hitEnemy);
+                                        if (others.length > 0) {
+                                            isFinalBossPiece = false;
+                                            addScore(1000); // Point reward for breaking a copy
+                                        }
+                                    }
+
+                                    if (isFinalBossPiece) {
+                                        // Boss Defeated
+                                        for (let i = 0; i < 50; i++) { // Shower of orbs
+                                            orbs.push(new Orb(hitEnemy.x + (Math.random() - 0.5) * 50, hitEnemy.y + (Math.random() - 0.5) * 50));
+                                        }
+                                        addScore(5000);
+                                        
+                                        if (hitEnemy.type === 'mothership') {
+                                            for (let i = 0; i < 3; i++) {
+                                                const mini = new Enemy(hitEnemy.x, hitEnemy.y, 'mothership-mini');
+                                                const angle = (i * Math.PI * 2) / 3;
+                                                mini.x += Math.cos(angle) * 100;
+                                                mini.y += Math.sin(angle) * 100;
+                                                enemies.push(mini);
+                                            }
+                                        } else if (hitEnemy.type === 'mothership-mini') {
+                                            const others = enemies.filter(e => e.type === 'mothership-mini' && !e.markedForDeletion);
+                                            if (others.length === 0) {
+                                                setTimeout(() => {
+                                                    gameOver(true); // Game complete win
+                                                }, 2000);
+                                            }
+                                        } else {
+                                            // Spawn a ramping cluster of aggressive Hex-Dodgers
+                                            const encounters = bossEncounterCounts[hitEnemy.type] || 1;
+                                            const hexCount = 2 + (encounters * 2); 
+                                            for (let i = 0; i < hexCount; i++) {
+                                                let hex = new Enemy(hitEnemy.x + (Math.random() - 0.5) * 100, hitEnemy.y + (Math.random() - 0.5) * 100, 'hex-dodger');
+                                                hex.angry = true;
+                                                enemies.push(hex);
+                                            }
+                                        }
+                                    }
+                                } else if (hitEnemy.type === 'snake-head') {
+                                    addScore(1000);
+                                    // When the head dies, its segments break off and bounce around
+                                    hitEnemy.segments.forEach(seg => {
+                                        seg.leader = null;
+                                        seg.scattered = true;
+                                        seg.hp = 1;
+                                        seg.speed = 6.0; // Fast bounce
+                                        const explodeAngle = Math.random() * Math.PI * 2;
+                                        seg.velocity.x = Math.cos(explodeAngle);
+                                        seg.velocity.y = Math.sin(explodeAngle);
+                                    });
+                                } else if (hitEnemy.type === 'gravity-well') {
+                                    enemies.push(new Enemy(hitEnemy.x, hitEnemy.y, 'super-gravity-well'));
+                                } else if (hitEnemy.type === 'super-gravity-well') {
+                                    if (grid) grid.applyForce(hitEnemy.x, hitEnemy.y, 800, 50); // Massive outward explosion wave
+                                    createSpriteExplosion(hitEnemy.x, hitEnemy.y, '#ffffff');
+                                } else if (hitEnemy.type === 'dog-bone-bomb') {
+                                    sounds.bomb();
+                                    const ballDist = 52;
+                                    const b1x = hitEnemy.x + Math.cos(hitEnemy.angle) * ballDist;
+                                    const b1y = hitEnemy.y + Math.sin(hitEnemy.angle) * ballDist;
+                                    const b2x = hitEnemy.x + Math.cos(hitEnemy.angle + Math.PI) * ballDist;
+                                    const b2y = hitEnemy.y + Math.sin(hitEnemy.angle + Math.PI) * ballDist;
+                                    createExplosion(b1x, b1y, '#ffaa00');
+                                    createExplosion(b2x, b2y, '#ffaa00');
+                                    if (grid) { grid.applyForce(b1x, b1y, 250, 100); grid.applyForce(b2x, b2y, 250, 100); }
+                                    miniBombEffects.push({ x: b1x, y: b1y, radius: 0, alpha: 1 }, { x: b2x, y: b2y, radius: 0, alpha: 1 });
+                                }
+                            }
+                        });
                     }
                 });
 
                 // Gravity Well Absorption Logic
                 if (enemy.type === 'gravity-well' || enemy.type === 'super-gravity-well') {
                     enemies.forEach((other, otherIndex) => {
-                        const isAbsorbable = other !== enemy && !['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'super-gravity-well', 'proton', 'hex-yoyo'].includes(other.type) && !(enemy.type === 'gravity-well' && other.type === 'gravity-well');
+                        const isAbsorbable = other !== enemy && !['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'super-gravity-well', 'proton', 'hex-yoyo', 'black-hole'].includes(other.type) && !(enemy.type === 'gravity-well' && other.type === 'gravity-well') && !(enemy.type === 'gravity-well' && other.type === 'dog-bone-bomb');
                         if (isAbsorbable) { // Using squared distance is faster
                             const combinedRadius = enemy.radius + other.radius;
                             if (Math.abs(enemy.x - other.x) > combinedRadius + 5 ||
@@ -3191,12 +4183,12 @@
 
                                 if (enemy.type === 'super-gravity-well') {
                                     addScore(50);
-                                    if (enemy.absorbed >= 10) { // Overload
+                                    if (enemy.absorbed >= 30) { // Overload
                                         enemy.hp = 0;
                                         enemy.markedForDeletion = true;
                                         addScore(500);
-                                        createExplosion(enemy.x, enemy.y, enemy.color);
-                                        if (grid) grid.applyForce(enemy.x, enemy.y, 1500, 50);
+                                        createSpriteExplosion(enemy.x, enemy.y, enemy.color);
+                                        if (grid) grid.applyForce(enemy.x, enemy.y, 800, 50);
                                     }
                                 } else {
                                     // Overload
@@ -3208,7 +4200,7 @@
                                         enemy.markedForDeletion = true;
                                         addScore(250);
                                         sounds.explode();
-                                        createExplosion(enemy.x, enemy.y, enemy.color);
+                                        createSpriteExplosion(enemy.x, enemy.y, enemy.color);
                                         enemies.push(new Enemy(enemy.x, enemy.y, 'super-gravity-well'));
                                     }
                                 }
@@ -3218,7 +4210,7 @@
                 }
 
                 // Collision: Enemy vs Player
-                if (player.alive && !debugInvincible) { // Using squared distance is faster
+                if (player.alive) { // Using squared distance is faster
                     let combinedRadius = player.radius + enemy.radius;
                     let isShieldHit = false;
                     
@@ -3228,101 +4220,141 @@
                     }
                     
                     const distSq = (player.x - enemy.x)**2 + (player.y - enemy.y)**2;
-                    if (distSq < combinedRadius * combinedRadius) {
-                        if (enemy.type === 'dog-bone-bomb') {
-                            enemy.markedForDeletion = true;
-                            createExplosion(enemy.x, enemy.y, '#ffaa00');
-                            sounds.bomb(); 
-                            if (grid) grid.applyForce(player.x, player.y, 1000, 100);
-                            // Spawn expanding mini-bomb
-                            miniBombEffects.push({ x: enemy.x, y: enemy.y, radius: 0, alpha: 1 });
-                        } else if (isShieldHit) {
-                            if (!enemy.markedForDeletion && !['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret'].includes(enemy.type)) {
-                                enemy.markedForDeletion = true;
-                                createExplosion(enemy.x, enemy.y, enemy.color);
-                                
-                                const points = (['gravity-well', 'super-gravity-well'].includes(enemy.type) ? 500 : 100);
-                                addScore(points);
-                                
-                                if (enemy.type !== 'hex-yoyo' && enemy.type !== 'super-gravity-well') {
-                                    orbs.push(new Orb(enemy.x, enemy.y));
-                                }
+                    
+                    let isHit = false;
+                    let isSafeDogBoneTrigger = false;
 
-                                if (enemy.type === 'spinner') {
-                                    for(let i=0; i<3; i++) {
-                                        enemies.push(new Enemy(enemy.x, enemy.y, 'spinner-mini'));
+                    if (enemy.type === 'dog-bone-bomb') {
+                        // Custom directional collision logic for the "Door" mechanics
+                        const dx = player.x - enemy.x;
+                        const dy = player.y - enemy.y;
+                        const cos = Math.cos(-enemy.angle);
+                        const sin = Math.sin(-enemy.angle);
+                        const localX = dx * cos - dy * sin;
+                        const localY = dx * sin + dy * cos;
+
+                        const effectivePlayerRadius = isShieldHit ? player.radius + 15 : player.radius;
+
+                        if (Math.abs(localX) <= 48 && Math.abs(localY) < effectivePlayerRadius + 15) {
+                            isHit = true;
+                            isSafeDogBoneTrigger = true; // Safely flew through the doorway
+                        } else if (Math.hypot(Math.abs(localX) - 52, localY) < effectivePlayerRadius + 10) {
+                            isHit = true;
+                            isSafeDogBoneTrigger = false; // Hit the outer red balls (lethal)
+                        }
+                    } else if (distSq < combinedRadius * combinedRadius) {
+                        isHit = true;
+                    }
+
+                    if (isHit) {
+                        if (enemy.type === 'dog-bone-bomb' && isSafeDogBoneTrigger) {
+                            enemy.markedForDeletion = true;
+                            sounds.bomb(); 
+                            
+                            const ballDist = 52;
+                            const b1x = enemy.x + Math.cos(enemy.angle) * ballDist;
+                            const b1y = enemy.y + Math.sin(enemy.angle) * ballDist;
+                            const b2x = enemy.x + Math.cos(enemy.angle + Math.PI) * ballDist;
+                            const b2y = enemy.y + Math.sin(enemy.angle + Math.PI) * ballDist;
+                            
+                            createExplosion(b1x, b1y, '#ffaa00');
+                            createExplosion(b2x, b2y, '#ffaa00');
+                            if (grid) { grid.applyForce(b1x, b1y, 250, 100); grid.applyForce(b2x, b2y, 250, 100); }
+                            miniBombEffects.push({ x: b1x, y: b1y, radius: 0, alpha: 1 }, { x: b2x, y: b2y, radius: 0, alpha: 1 });
+                        } else if (!debugInvincible) { // Re-applied protection to standard hits
+                            if (isShieldHit) {
+                                if (!enemy.markedForDeletion && !['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret', 'black-hole'].includes(enemy.type)) {
+                                    enemy.markedForDeletion = true;
+                                    if (enemy.type === 'centipede' || enemy.type === 'gravity-well' || enemy.type === 'super-gravity-well') createSpriteExplosion(enemy.x, enemy.y, enemy.color);
+                                    else createExplosion(enemy.x, enemy.y, enemy.color);
+                                    
+                                    const points = (['gravity-well', 'super-gravity-well'].includes(enemy.type) ? 500 : 100);
+                                    addScore(points);
+                                    
+                                    if (enemy.type !== 'hex-yoyo' && enemy.type !== 'super-gravity-well') {
+                                        orbs.push(new Orb(enemy.x, enemy.y));
                                     }
-                                } else if (enemy.type === 'mini-titan') {
-                                    for(let i=0; i<4; i++) {
-                                        enemies.push(new Enemy(enemy.x, enemy.y, 'grunt'));
+    
+                                    if (enemy.type === 'spinner') {
+                                        for(let i=0; i<3; i++) {
+                                            enemies.push(new Enemy(enemy.x, enemy.y, 'spinner-mini'));
+                                        }
+                                    } else if (enemy.type === 'mini-titan') {
+                                        for(let i=0; i<4; i++) {
+                                            enemies.push(new Enemy(enemy.x, enemy.y, 'grunt'));
+                                        }
+                                    } else if (enemy.type === 'snake-head') {
+                                        enemy.segments.forEach(seg => {
+                                            seg.leader = null;
+                                            seg.scattered = true;
+                                            seg.hp = 1;
+                                            seg.speed = 6.0;
+                                            const explodeAngle = Math.random() * Math.PI * 2;
+                                            seg.velocity.x = Math.cos(explodeAngle);
+                                            seg.velocity.y = Math.sin(explodeAngle);
+                                        });
+                                    } else if (enemy.type === 'gravity-well') {
+                                        enemies.push(new Enemy(enemy.x, enemy.y, 'super-gravity-well'));
+                                    } else if (enemy.type === 'super-gravity-well') {
+                                        if (grid) grid.applyForce(enemy.x, enemy.y, 800, 50); // Massive outward explosion wave
+                                        createSpriteExplosion(enemy.x, enemy.y, '#ffffff');
+                                    } else if (enemy.type === 'hex-yoyo') {
+                                        if (enemy.owner && !enemy.owner.markedForDeletion) {
+                                            enemy.owner.yoyoOut = false;
+                                            enemy.owner.nextYoyoMode = 'around-the-world';
+                                            enemy.owner.missileCooldown = 0.5; // Fast respawn
+                                            enemy.owner.angry = true;
+                                        }
                                     }
-                                } else if (enemy.type === 'snake-head') {
-                                    enemy.segments.forEach(seg => {
-                                        seg.leader = null;
-                                        seg.scattered = true;
-                                        seg.hp = 1;
-                                        seg.speed = 6.0;
-                                        const explodeAngle = Math.random() * Math.PI * 2;
-                                        seg.velocity.x = Math.cos(explodeAngle);
-                                        seg.velocity.y = Math.sin(explodeAngle);
-                                    });
-                                } else if (enemy.type === 'gravity-well') {
-                                    enemies.push(new Enemy(enemy.x, enemy.y, 'super-gravity-well'));
-                                } else if (enemy.type === 'super-gravity-well') {
-                                    if (grid) grid.applyForce(enemy.x, enemy.y, 1500, 50); // Massive outward explosion wave
-                                    createExplosion(enemy.x, enemy.y, '#ffffff');
+                                }
+                            } else if (!player.invulnerable) {
+                                // Player Hit
+                                createExplosion(player.x, player.y, player.color);
+                                if (!infiniteLives) {
+                                   lives--;
+                                    livesEl.innerHTML = lives;
+                                    if (scoreStreak >= 45000) {
+                                        scoreStreak = 10000; // Downgrade to Level 2 (3-Way Spread)
+                                    } else {
+                                        scoreStreak = 0;
+                                    }
+                                    updateUpgradesUI();
+                                }
+                                
+                                // Kill enemy that hit player
+                                if (enemy.type !== 'super-gravity-well' && enemy.type !== 'black-hole' && !['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret'].includes(enemy.type)) {
+                                    enemy.markedForDeletion = true;
+                                    if (enemy.type === 'snake-head') {
+                                        enemy.segments.forEach(seg => {
+                                            seg.leader = null;
+                                            seg.scattered = true;
+                                            seg.hp = 1;
+                                            seg.speed = 6.0;
+                                            const explodeAngle = Math.random() * Math.PI * 2;
+                                            seg.velocity.x = Math.cos(explodeAngle);
+                                            seg.velocity.y = Math.sin(explodeAngle);
+                                        });
+                                    }
+                                }
+                                if (enemy.type !== 'hex-yoyo' && enemy.type !== 'super-gravity-well' && enemy.type !== 'black-hole' && !['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret'].includes(enemy.type)) {
+                                    orbs.push(new Orb(enemy.x, enemy.y));
                                 } else if (enemy.type === 'hex-yoyo') {
-                                    if (enemy.owner && !enemy.owner.markedForDeletion) {
+                                    if (enemy.owner) {
                                         enemy.owner.yoyoOut = false;
                                         enemy.owner.nextYoyoMode = 'around-the-world';
-                                        enemy.owner.missileCooldown = 0.5; // Fast respawn
                                         enemy.owner.angry = true;
                                     }
                                 }
-                            }
-                        } else if (!player.invulnerable) {
-                            // Player Hit
-                            createExplosion(player.x, player.y, player.color);
-                            if (!infiniteLives) {
-                               lives--;
-                                livesEl.innerHTML = lives;
-                                scoreStreak = 0;
-                                updateBoostUI();
-                            }
-                            
-                            // Kill enemy that hit player
-                            if (enemy.type !== 'super-gravity-well' && !['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret'].includes(enemy.type)) {
-                                enemy.markedForDeletion = true;
-                                if (enemy.type === 'snake-head') {
-                                    enemy.segments.forEach(seg => {
-                                        seg.leader = null;
-                                        seg.scattered = true;
-                                        seg.hp = 1;
-                                        seg.speed = 6.0;
-                                        const explodeAngle = Math.random() * Math.PI * 2;
-                                        seg.velocity.x = Math.cos(explodeAngle);
-                                        seg.velocity.y = Math.sin(explodeAngle);
-                                    });
+    
+                                triggerDeathBomb();
+    
+                                if (lives <= 0 && !infiniteLives) {
+                                    player.alive = false;
+                                    setTimeout(gameOver, 1000); // Wait a second to see explosion
+                                } else {
+                                    player.alive = false;
+                                    player.beginRespawnBlinking(1000);
                                 }
-                            }
-                            if (enemy.type !== 'hex-yoyo' && enemy.type !== 'super-gravity-well' && !['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini', 'mothership-turret', 'mothership-final-turret'].includes(enemy.type)) {
-                                orbs.push(new Orb(enemy.x, enemy.y));
-                            } else if (enemy.type === 'hex-yoyo') {
-                                if (enemy.owner) {
-                                    enemy.owner.yoyoOut = false;
-                                    enemy.owner.nextYoyoMode = 'around-the-world';
-                                    enemy.owner.angry = true;
-                                }
-                            }
-
-                            triggerDeathBomb();
-
-                            if (lives <= 0 && !infiniteLives) {
-                                player.alive = false;
-                                setTimeout(gameOver, 1000); // Wait a second to see explosion
-                            } else {
-                                player.alive = false;
-                                player.beginRespawnBlinking(1000);
                             }
                         }
                     }
@@ -3348,12 +4380,18 @@
                     particles.splice(i, 1);
                 }
             }
+            for (let i = explosions.length - 1; i >= 0; i--) {
+                if (explosions[i].markedForDeletion) {
+                    explosionPool.release(explosions[i]);
+                    explosions.splice(i, 1);
+                }
+            }
             for (let i = orbs.length - 1; i >= 0; i--) {
                 if (orbs[i].markedForDeletion) orbs.splice(i, 1);
             }
 
             // Spawning
-            spawnEnemies(dt);
+            if (!isTestRoom) spawnEnemies(dt);
 
             // --- RENDER ---
 
@@ -3433,6 +4471,7 @@
             // Particles are special, they set globalAlpha
             particles.forEach(p => p.draw(ctx, view));
             ctx.globalAlpha = 1; // Reset alpha
+            explosions.forEach(exp => exp.draw(ctx, view));
 
             player.draw(ctx); // Player doesn't need culling
 
@@ -3440,7 +4479,7 @@
             ctx.restore();
 
             // Draw Boss Life Bar
-            const activeBosses = enemies.filter(e => ['sapphire', 'ruby', 'emerald', 'mothership', 'mothership-mini'].includes(e.type));
+            const activeBosses = enemies.filter(e => ['sapphire', 'ruby-red', 'centipede', 'mothership', 'mothership-mini'].includes(e.type));
             if (activeBosses.length > 0) {
                 let totalHp = activeBosses.reduce((sum, e) => sum + e.hp, 0);
                 let totalMaxHp = activeBosses.reduce((sum, e) => sum + e.maxHp, 0);
@@ -3452,7 +4491,7 @@
                 
                 ctx.fillStyle = '#ff0000';
                 if (activeBosses.some(e => e.type === 'mothership' && e.turrets && e.turrets.some(t => !t.markedForDeletion))) {
-                    ctx.fillStyle = '#555555';
+                    ctx.fillStyle = '#ffffff'; // White indicates shield is active
                 }
                 ctx.fillRect(barX, barY, barWidth * hpPercent, barHeight);
             }
@@ -3478,7 +4517,7 @@
             if (!mainMenu.classList.contains('hidden')) return [startGameBtn, settingsBtn];
             if (!settingsMenu.classList.contains('hidden')) return [settingsInvincibleCheck, settingsInfiniteLivesCheck, settingsQrcodeBtn, settingsBackBtn];
             if (!gameOverScreen.classList.contains('hidden')) return [continueBtn, retryBtn];
-            if (isPaused && !pauseMenu.classList.contains('hidden')) return [resumeBtn, fullscreenBtn, pauseQrcodeBtn, invincibleCheck, infiniteLivesCheck, showLinesCheck, skipLevelBtn];
+            if (isPaused && !pauseMenu.classList.contains('hidden')) return [resumeBtn, fullscreenBtn, pauseQrcodeBtn, invincibleCheck, infiniteLivesCheck, showLinesCheck, skipLevelBtn, testRoomBtn];
             return [];
         }
 
@@ -3725,6 +4764,164 @@
             }
             requestAnimationFrame(pollGamepadsForPause);
         }
+        
+        // Build the cached images before the game starts
+        buildRenderCache();
+        pollGamepadsForPause();
+    </script>
+</body>
+</html>
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const touch = e.changedTouches[i];
+                    if (!virtualSticks[stickName].active || virtualSticks[stickName].id === touch.identifier) {
+                        virtualSticks[stickName].active = true;
+                        virtualSticks[stickName].id = touch.identifier;
+
+                        const rect = zone.getBoundingClientRect();
+                        const centerX = rect.left + rect.width / 2;
+                        const centerY = rect.top + rect.height / 2;
+
+                        let dx = touch.clientX - centerX;
+                        let dy = touch.clientY - centerY;
+
+                        const dist = Math.hypot(dx, dy);
+                        if (dist > maxDist) {
+                            dx = (dx / dist) * maxDist;
+                            dy = (dy / dist) * maxDist;
+                        }
+
+                        knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+                        virtualSticks[stickName].deltaX = dx / maxDist;
+                        virtualSticks[stickName].deltaY = dy / maxDist;
+                    }
+                }
+            };
+
+            const handleEnd = (e) => {
+                e.preventDefault();
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    if (virtualSticks[stickName].id === e.changedTouches[i].identifier) {
+                        virtualSticks[stickName].active = false;
+                        virtualSticks[stickName].id = null;
+                        virtualSticks[stickName].deltaX = 0;
+                        virtualSticks[stickName].deltaY = 0;
+                        knob.style.transform = `translate(-50%, -50%)`;
+                    }
+                }
+            };
+
+            zone.addEventListener('touchstart', handleTouch, { passive: false });
+            zone.addEventListener('touchmove', handleTouch, { passive: false });
+            zone.addEventListener('touchend', handleEnd, { passive: false });
+            zone.addEventListener('touchcancel', handleEnd, { passive: false });
+        }
+
+        setupJoystick('left-joystick', 'left', 'left-knob');
+        setupJoystick('right-joystick', 'right', 'right-knob');
+
+        const mobilePauseZone = document.getElementById('mobile-pause-zone');
+        if (mobilePauseZone) {
+            mobilePauseZone.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                
+                if (gameActive) {
+                    togglePause();
+                } else if (!gameOverScreen.classList.contains('hidden')) {
+                    resetGame(true); // Triggers continue
+                } else if (!startScreen.classList.contains('hidden')) {
+                        startScreen.classList.add('hidden');
+                        mainMenu.classList.remove('hidden');
+                        if (!musicPlaying) sounds.startMusic();
+                    } else if (!mainMenu.classList.contains('hidden')) {
+                        resetGame(false);
+                }
+            }, { passive: false });
+        }
+
+        const mobileBombActionBtn = document.getElementById('mobile-bomb-btn');
+        if (mobileBombActionBtn) {
+            mobileBombActionBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                useBomb();
+            }, { passive: false });
+        }
+
+        startBtn.addEventListener('click', () => {
+            initAudio();
+            startScreen.classList.add('hidden');
+            mainMenu.classList.remove('hidden');
+            if (!musicPlaying) sounds.startMusic();
+        });
+
+        startGameBtn.addEventListener('click', () => {
+            initAudio();
+            resetGame(false);
+        });
+
+        settingsBtn.addEventListener('click', () => {
+            mainMenu.classList.add('hidden');
+            settingsMenu.classList.remove('hidden');
+        });
+
+        function openQrcodeToast() {
+            const qrImg = document.getElementById('qrcode-img');
+            if (!qrImg.hasAttribute('src')) {
+                let urlToEncode = window.location.href;
+                if (urlToEncode.startsWith('file://')) {
+                    urlToEncode = 'https://everyonelovespepsicola.github.io/geometrywars/';
+                }
+                qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(urlToEncode)}`;
+            }
+            qrcodeToast.classList.remove('hidden');
+        }
+
+        settingsQrcodeBtn.addEventListener('click', () => {
+            openQrcodeToast();
+        });
+
+        pauseQrcodeBtn.addEventListener('click', () => {
+            openQrcodeToast();
+        });
+
+        closeQrcodeBtn.addEventListener('click', () => {
+            qrcodeToast.classList.add('hidden');
+        });
+
+        settingsBackBtn.addEventListener('click', () => {
+            settingsMenu.classList.add('hidden');
+            mainMenu.classList.remove('hidden');
+        });
+
+        continueBtn.addEventListener('click', () => {
+            initAudio();
+            resetGame(true);
+        });
+
+        retryBtn.addEventListener('click', () => {
+            initAudio();
+            resetGame(false);
+        });
+
+        pollGamepadsForMenus();
+
+        function pollGamepadsForPause() {
+            if (gamepadIndex !== null) {
+               const gp = navigator.getGamepads()[gamepadIndex];
+                if (gp && gp.buttons[9] && gp.buttons[9].pressed) {
+                    if (!startButtonPressed) {
+                        if (gameActive && (isPaused || frame > 10)) togglePause();
+                        startButtonPressed = true;
+                    }
+                } else {
+                    startButtonPressed = false;
+                }
+            }
+            requestAnimationFrame(pollGamepadsForPause);
+        }
+        
+        // Build the cached images before the game starts
+        buildRenderCache();
         pollGamepadsForPause();
     </script>
 </body>
